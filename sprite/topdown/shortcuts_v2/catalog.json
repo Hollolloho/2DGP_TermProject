@@ -1,0 +1,98 @@
+{
+  "version": 2,
+  "sheet": "shortcuts.png",
+  "size": [
+    384,
+    96
+  ],
+  "frame_size": [
+    96,
+    96
+  ],
+  "native_wall_tile": 32,
+  "frames": [
+    {
+      "kind": "puzzle",
+      "state": "closed",
+      "rect_top_left": [
+        0,
+        0,
+        96,
+        96
+      ],
+      "pico2d_clip": [
+        0,
+        0,
+        96,
+        96
+      ],
+      "pivot": [
+        48,
+        48
+      ]
+    },
+    {
+      "kind": "puzzle",
+      "state": "open",
+      "rect_top_left": [
+        96,
+        0,
+        96,
+        96
+      ],
+      "pico2d_clip": [
+        96,
+        0,
+        96,
+        96
+      ],
+      "pivot": [
+        48,
+        48
+      ]
+    },
+    {
+      "kind": "trap",
+      "state": "entry",
+      "rect_top_left": [
+        192,
+        0,
+        96,
+        96
+      ],
+      "pico2d_clip": [
+        192,
+        0,
+        96,
+        96
+      ],
+      "pivot": [
+        48,
+        48
+      ]
+    },
+    {
+      "kind": "trap",
+      "state": "arrival",
+      "rect_top_left": [
+        288,
+        0,
+        96,
+        96
+      ],
+      "pico2d_clip": [
+        288,
+        0,
+        96,
+        96
+      ],
+      "pivot": [
+        48,
+        48
+      ]
+    }
+  ],
+  "method": "Existing wall tile strip edited with imagegen; local opening-only alpha masks packed with SDL2.",
+  "placement": "Three-by-three tile canvas. Only compact wall band has alpha. Runtime clips to existing solid visible tiles.",
+  "states": "Four states, 90-degree 2D rotations for wall direction; no replacement wall collar."
+}
