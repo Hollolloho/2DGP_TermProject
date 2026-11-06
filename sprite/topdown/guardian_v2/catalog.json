@@ -1,0 +1,88 @@
+{
+  "version": 2,
+  "sheet": "guardian.png",
+  "size": [
+    256,
+    64
+  ],
+  "frame_size": [
+    64,
+    64
+  ],
+  "directions": [
+    "down",
+    "left",
+    "right",
+    "up"
+  ],
+  "frames_per_direction": 1,
+  "pivot_top_left": [
+    32,
+    56
+  ],
+  "poses": "directional idle only; not a walking or attack animation",
+  "source": "source.png",
+  "method": "OpenAI generated source, native SDL2 crop/resample",
+  "frames": [
+    {
+      "direction": "down",
+      "rect_top_left": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "pico2d_clip": [
+        0,
+        0,
+        64,
+        64
+      ]
+    },
+    {
+      "direction": "left",
+      "rect_top_left": [
+        64,
+        0,
+        64,
+        64
+      ],
+      "pico2d_clip": [
+        64,
+        0,
+        64,
+        64
+      ]
+    },
+    {
+      "direction": "right",
+      "rect_top_left": [
+        128,
+        0,
+        64,
+        64
+      ],
+      "pico2d_clip": [
+        128,
+        0,
+        64,
+        64
+      ]
+    },
+    {
+      "direction": "up",
+      "rect_top_left": [
+        192,
+        0,
+        64,
+        64
+      ],
+      "pico2d_clip": [
+        192,
+        0,
+        64,
+        64
+      ]
+    }
+  ]
+}
