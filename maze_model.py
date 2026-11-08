@@ -54,6 +54,24 @@ def distances(grid, start):
     return result
 
 
+def guard_position(grid, path, protected, seed):
+    """Prefer a junction off the route, separated from service/arrival cells."""
+    spawn_distance=distances(grid,path[0])
+    target_distance=distances(grid,path[min(26,len(path)-2)])
+    clearance=[distances(grid,cell) for cell in protected]
+    candidates=[cell for cell,d in spawn_distance.items() if d>=12 and
+                all(field.get(cell,0)>=4 for field in clearance)]
+    if not candidates:
+        candidates=[cell for cell,d in spawn_distance.items() if d>=4 and cell not in protected]
+    nearby=[cell for cell in candidates if target_distance.get(cell,999)<=9]
+    rng=random.Random(seed+911)
+    def rank(cell):
+        x,y=cell
+        degree=sum(not grid[y+dy][x+dx] for dx,dy in DIRECTIONS)
+        return degree>=3,cell not in path,-target_distance[cell],rng.random()
+    return max(nearby or candidates,key=rank)
+
+
 @dataclass
 class Player:
     x: float
@@ -89,7 +107,14 @@ class Game:
         self.shortcut_distance = distances(self.grid,self.trap_cell)[self.trap_exit]
         self.trap_discovered, self.trap_completed = False, False
         self.landing_until = 0.0
-        self.guard = path[19]
+        protected=(self.spawn,self.torch_cell,self.trap_cell,self.trap_exit,self.fountain,self.exit)
+        self.guard = guard_position(self.grid,path,protected,seed)
+        gx,gy=self.guard
+        def open_length(direction):
+            dx,dy=DIRECTIONS[direction]
+            return next((n for n in range(1,6) if self.solid(gx+dx*n,gy+dy*n)),6)
+        self.guard_direction=max(range(4),key=open_length)
+        self.guard_alert_until=0.0
         self.guard_hp, self.fountain_used = 3, False
         self.phase = run_number % 3
         self.phase_time = self.time = 0.0
@@ -197,6 +222,7 @@ class Game:
         self.player.swing()
         if self.guard_hp > 0 and self.close_to(self.guard, 1.8):
             self.guard_hp -= 1
+            self.guard_alert_until=self.time+2.5
             self.message('수호자 타격' if self.guard_hp else '수호자 처치 · 추적 AI는 다음 단계')
 
     def update(self, dt, dx=0, dy=0, sprint=False):

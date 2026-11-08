@@ -23,7 +23,7 @@ class View:
         for name, path in {
             'terrain': 'sprite/topdown/terrain.png', 'actors': 'sprite/topdown/actors.png',
             'terrain_v2': 'sprite/topdown/terrain_v2/terrain.png',
-            'guardian': 'sprite/topdown/guardian.png',
+            'guardian': 'sprite/topdown/guardian_v2/guardian.png',
             'walls': 'sprite/wall/sheets/base_a.png',
             'ceiling': 'sprite/surfaces/parts/ceiling/Limestone_Top-2048x512.png',
             'floor': 'sprite/surfaces/parts/floor/Limestone_Bottom-2048x512.png',
@@ -106,8 +106,12 @@ class View:
 
     def actor(self, x, y, direction, step=0, guardian=False, tint=(255, 255, 255)):
         scale=self.world_scale
-        self.image('guardian' if guardian else 'actors', (x-16*scale,y-22*scale,32*scale,32*scale),
-                   ((direction*3+step)*32,0,32,32),tint)
+        if guardian:
+            self.image('guardian',(x-16*scale,y-28*scale,32*scale,32*scale),
+                       (direction*64,0,64,64),tint)
+        else:
+            self.image('actors',(x-16*scale,y-24*scale,32*scale,32*scale),
+                       ((direction*3+step)*32,0,32,32),tint)
 
     def world(self, x, y):
         return self.origin[0]+x*TILE*self.world_scale,self.origin[1]+y*TILE*self.world_scale
@@ -180,18 +184,22 @@ class View:
             x,y = game.torch_cell
             sx,sy=self.world(x+.5,y+.8)
             self.effect('torch',sx,sy,game.time,.23*self.world_scale)
-        if game.guard_hp and (game.guard in game.visible or game.reveal_all):
-            x,y = game.guard
-            sx,sy=self.world(x+.5,y+.5)
-            self.actor(sx,sy,0,guardian=True)
-            self.text('수호자',sx-15,sy-27*self.world_scale,(185,119,104))
-            for n in range(3):
-                self.rectangle(sx-8+n*6,sy-22*self.world_scale,4,2,(180,83,65) if n<game.guard_hp else (45,42,38))
         x,y = self.world(game.player.x,game.player.y)
         step = (int(game.time*8)%3) if game.player.state in ('walk','sprint') else 0
-        self.actor(x,y,game.player.direction,step)
-        if game.player.torch:
-            self.effect('torch',x-5*self.world_scale,y-2*self.world_scale,game.time,.17*self.world_scale)
+        actors=[(game.player.y,False)]
+        if game.guard_hp and (game.guard in game.visible or game.reveal_all):
+            actors.append((game.guard[1]+.5,True))
+        for _,guardian in sorted(actors):
+            if guardian:
+                sx,sy=self.world(game.guard[0]+.5,game.guard[1]+.5)
+                self.actor(sx,sy,game.guard_direction,guardian=True)
+                if game.time<game.guard_alert_until:
+                    self.rectangle(sx-7*self.world_scale,sy-27*self.world_scale,14*self.world_scale,self.world_scale,(36,29,26))
+                    self.rectangle(sx-7*self.world_scale,sy-27*self.world_scale,14*self.world_scale*game.guard_hp/3,self.world_scale,(155,75,59))
+            else:
+                self.actor(x,y,game.player.direction,step)
+                if game.player.torch:
+                    self.effect('torch',x-5*self.world_scale,y-2*self.world_scale,game.time,.17*self.world_scale)
         if game.attack_time < .75:
             angle = (90,180,0,270)[game.player.direction]
             dx,dy = DIRECTIONS[game.player.direction]
