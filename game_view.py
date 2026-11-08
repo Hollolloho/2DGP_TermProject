@@ -16,6 +16,7 @@ class View:
         self.root = Path(root)
         self.images, self.effects = {}, {}
         self.text_cache={}
+        self.shortcut_cache,self.shortcut_designs={},{}
         self.small = p.load_font('C:/Windows/Fonts/malgun.ttf', 10)
         self.font = p.load_font('C:/Windows/Fonts/malgun.ttf', 12)
         self.title = p.load_font('C:/Windows/Fonts/malgunbd.ttf', 17)
@@ -137,14 +138,19 @@ class View:
         if not game.solid(wx,wy):
             return
         opened=state in ('open','arrival')
-        source=((int(opened)+(0 if kind=='puzzle' else 2))*96,0,96,96)
-        angle={'south':0,'east':-90,'west':90,'north':180}[facing]
-        sx,sy=self.world(wx-1,wy-1)
+        frame=int(opened)+(0 if kind=='puzzle' else 2)
+        design_key=frame,facing
+        if design_key not in self.shortcut_designs:
+            self.shortcut_designs[design_key]=self.shortcut_design(frame,facing)
+        design=self.shortcut_designs[design_key]
+        parts={(action[0]//32,action[1]//32) for action in design}
         tile=TILE*self.world_scale
-        # Only the opening/rim pixels are overlaid. Existing wall pixels remain the base.
-        # Clip each touched tile so a frame/button cannot paint over a floor or unknown cell.
+        # Compose opaque native-resolution wall tiles once; use exactly the wall grid/filter.
         for y in range(wy-1,wy+2):
             for x in range(wx-1,wx+2):
+                part=x-wx+1,y-wy+1
+                if part not in parts:
+                    continue
                 if not game.solid(x,y) or not (game.reveal_all or (x,y) in game.visible):
                     continue
                 tx,ty=self.world(x,y)
@@ -153,9 +159,92 @@ class View:
                 if right<=left or bottom<=top:
                     continue
                 p.SDL_RenderSetClipRect(p.renderer,p.SDL_Rect(round(left),round(top),round(right-left),round(bottom-top)))
+                mask=sum(bit for dx,dy,bit in ((0,-1,1),(1,0,2),(0,1,4),(-1,0,8)) if game.solid(x+dx,y+dy))
+                variant=(x*3+y*5+game.seed)%4
+                image=self.shortcut_tile(mask,variant,frame,facing,part,design)
                 _,tint=self.tile_tint(game,x,y)
-                self.image('shortcuts',(sx,sy,tile*3,tile*3),source,tint,angle=angle)
+                p.SDL_SetTextureColorMod(image.texture,*tint)
+                p.SDL_RenderCopy(p.renderer,image.texture,None,p.SDL_Rect(round(tx),round(ty),round(tile),round(tile)))
         p.SDL_RenderSetClipRect(p.renderer,p.SDL_Rect(8,32,496,368))
+
+    @staticmethod
+    def shortcut_design(frame,facing):
+        """Only reuse the door interior. The generated masonry rim is intentionally excluded."""
+        puzzle=frame<2
+        def inside(x,y):
+            if puzzle:
+                if not 8<=y<32:return False
+                half=math.sqrt(max(0,8**2-(y-16)**2)) if y<16 else 8
+                return 48-half<=x<48+half
+            if not 12<=y<32:return False
+            left=(39,39,40,38,39)[min(4,int(y-12)//4)]
+            right=(57,58,58,57,58)[min(4,int(y-12)//4)]
+            return left<=x<right
+        coverage={}
+        for y in range(7,32):
+            for x in range(36,61):
+                count=sum(inside(x+ox,y+oy) for ox in (.25,.75) for oy in (.25,.75))
+                if count:coverage[x,y]=round(255*count/4)
+        actions=[]
+        for (x,y),alpha in coverage.items():
+            if puzzle:
+                u=43+min(10,max(0,int((x-40)*11/16)))
+                v=43+min(19,max(0,int((y-8)*20/24)))
+            else:
+                u=41+min(14,max(0,int((x-38)*15/20)))
+                v=48+min(15,max(0,int((y-12)*16/20)))
+            actions.append((x,y+32,'fill',frame*96+u,v,alpha))
+        # A one-pixel bevel shades the existing wall texture, preserving its mortar and grain.
+        for y in range(6,32):
+            for x in range(35,62):
+                if (x,y) in coverage:continue
+                if (x+1,y) in coverage:
+                    actions.append((x,y+32,'shade',255,255,13))
+                elif (x-1,y) in coverage or (x,y+1) in coverage:
+                    actions.append((x,y+32,'shade',0,0,42))
+        if puzzle:
+            for y in range(16,21):
+                for x in range(67,72):
+                    border=x in (67,71) or y in (16,20)
+                    actions.append((x,y+32,'shade',0 if border or frame==1 else 255,0 if border or frame==1 else 255,
+                                    70 if border else 45 if frame==1 else 18))
+        turned=[]
+        for x,y,*action in actions:
+            if facing=='east':x,y=y,95-x
+            elif facing=='west':x,y=95-y,x
+            elif facing=='north':x,y=95-x,95-y
+            turned.append((x,y,*action))
+        return turned
+
+    def shortcut_tile(self,mask,variant,frame,facing,part,design):
+        key=mask,variant,frame,facing,part
+        if key in self.shortcut_cache:return self.shortcut_cache[key]
+        previous=p.SDL_GetRenderTarget(p.renderer)
+        clipped=p.SDL_RenderIsClipEnabled(p.renderer)
+        clip=p.SDL_Rect();p.SDL_RenderGetClipRect(p.renderer,ctypes.byref(clip))
+        texture=self.target(32,32)
+        try:
+            p.SDL_SetRenderTarget(p.renderer,texture);p.SDL_RenderSetClipRect(p.renderer,None)
+            self.image('terrain_v2',(0,0,32,32),(mask*32,variant*32,32,32))
+            for x,y,action,a,b,c in design:
+                if (x//32,y//32)!=part:continue
+                x,y=x%32,y%32
+                if action=='fill':
+                    p.SDL_SetTextureAlphaMod(self.images['shortcuts'].texture,c)
+                    self.image('shortcuts',(x,y,1,1),(a,b,1,1))
+                else:
+                    self.rectangle(x,y,1,1,(a,a,b,c))
+            p.SDL_SetTextureBlendMode(texture,p.SDL_BLENDMODE_NONE)
+            image=p.Image(texture)
+            self.shortcut_cache[key]=image
+            return image
+        except Exception:
+            p.SDL_DestroyTexture(texture)
+            raise
+        finally:
+            p.SDL_SetTextureAlphaMod(self.images['shortcuts'].texture,255)
+            p.SDL_SetRenderTarget(p.renderer,previous)
+            p.SDL_RenderSetClipRect(p.renderer,ctypes.byref(clip) if clipped else None)
 
     @staticmethod
     def tile_tint(game,x,y):
@@ -368,6 +457,8 @@ class View:
             p.SDL_SetRenderTarget(p.renderer,None)
 
     def close(self):
+        self.shortcut_cache.clear()
+        self.shortcut_designs.clear()
         self.images.clear()
         self.effects.clear()
         self.text_cache.clear()
