@@ -12,6 +12,9 @@ def run():
         assert game.spawn!=game.exit and reachable[game.spawn]>25
         assert all(game.grid[0]) and all(game.grid[-1])
         assert all(row[0] and row[-1] for row in game.grid)
+        assert not game.solid(*game.guard)
+        protected=(game.spawn,game.torch_cell,game.trap_cell,game.trap_exit,game.fountain,game.exit)
+        assert all(distances(game.grid,cell)[game.guard]>=4 for cell in protected), 'Guardian must not camp on arrival/service cells.'
         x,y=game.spawn
         for dx in (-1,0,1):
             for dy in (-1,0,1):
@@ -21,6 +24,11 @@ def run():
     assert game.torch_cell in game.visible
     assert any(game.grid[y][x] for x,y in game.visible), 'The nearest blocking walls must be visible themselves.'
     before=len(game.visible)
+    assert game.guard_alert_until<=game.time
+    combat=Game()
+    combat.player.x,combat.player.y=combat.guard[0]+.5,combat.guard[1]+.5
+    combat.attack()
+    assert combat.guard_hp==2 and combat.guard_alert_until>combat.time
     game.interact()
     assert game.player.torch and len(game.visible)>=before
     game.player.x,game.player.y=game.trap_cell[0]+.5,game.trap_cell[1]+.5
