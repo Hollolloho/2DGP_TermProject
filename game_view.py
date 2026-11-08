@@ -22,12 +22,13 @@ class View:
         self.big = p.load_font('C:/Windows/Fonts/malgunbd.ttf', 46)
         for name, path in {
             'terrain': 'sprite/topdown/terrain.png', 'actors': 'sprite/topdown/actors.png',
+            'terrain_v2': 'sprite/topdown/terrain_v2/terrain.png',
             'guardian': 'sprite/topdown/guardian.png',
             'walls': 'sprite/wall/sheets/base_a.png',
             'ceiling': 'sprite/surfaces/parts/ceiling/Limestone_Top-2048x512.png',
             'floor': 'sprite/surfaces/parts/floor/Limestone_Bottom-2048x512.png',
         }.items():
-            self.images[name] = self.load(path, pixel=name in ('terrain','actors','guardian'))
+            self.images[name] = self.load(path, pixel=name in ('terrain','terrain_v2','actors','guardian'))
         for name in ('torch', 'sword-slash'):
             data = json.loads((self.root/f'sprite/topdown/effects/{name}.json').read_text())
             self.images[name] = self.load(f'sprite/topdown/effects/{name}.png', pixel=True)
@@ -96,8 +97,12 @@ class View:
                 self.text_cache.pop(next(iter(self.text_cache)))
         image.draw(x+image.w/2,LH-y)
 
-    def tile(self, index, x, y, tint=(255, 255, 255), size=16):
-        self.image('terrain', (x, y, size, size), ((index%16)*16, (index//16)*16, 16, 16), tint)
+    def tile(self, index, x, y, tint=(255, 255, 255), size=16, variant=0):
+        if index<24:
+            source=(index*32,(variant%4)*32,32,32) if index<16 else ((index-16)*32,128,32,32)
+            self.image('terrain_v2',(x,y,size,size),source,tint)
+        else:
+            self.image('terrain', (x, y, size, size), ((index%16)*16, (index//16)*16, 16, 16), tint)
 
     def actor(self, x, y, direction, step=0, guardian=False, tint=(255, 255, 255)):
         scale=self.world_scale
@@ -147,12 +152,23 @@ class View:
                 else:
                     index = 16+((x*7+y*11+game.seed)%8)
                 brightness = 1.0 if visible else .80 if game.reveal_all else .32
-                phase_tint = ((1., .97, .86), (.76, .83, 1.), (.85, 1., .96))[game.phase]
+                phase_tint = ((.94,.96,1.),(.70,.79,.94),(.82,.90,.96))[game.phase]
+                if visible and game.player.torch:
+                    glow=max(0.,1.-math.hypot(x+.5-game.player.x,y+.5-game.player.y)/7.)
+                    phase_tint=tuple(min(1.,c+warm*glow) for c,warm in zip(phase_tint,(.30,.13,0.)))
                 tint = tuple(round(255*brightness*c) for c in phase_tint)
                 sx,sy=self.world(x,y)
                 if sx+size<8 or sx>504 or sy+size<32 or sy>400:
                     continue
-                self.tile(index,sx,sy,tint,size=size)
+                self.tile(index,sx,sy,tint,size=size,variant=(x*3+y*5+game.seed)%4)
+                if not game.grid[y][x]:
+                    # Contact shadows stay within floor cells and do not change collision.
+                    alpha=round(90*brightness)
+                    if game.solid(x,y-1):
+                        for depth,weight in enumerate((1.,.72,.42,.2)):
+                            self.rectangle(sx,sy+depth*self.world_scale,size,self.world_scale,(8,12,14,round(alpha*weight)))
+                    if game.solid(x-1,y):
+                        self.rectangle(sx,sy,2*self.world_scale,size,(8,12,14,round(alpha*.45)))
         for cell, index in [(game.trap_cell,32), (game.exit,36),
                             (game.fountain,35 if game.fountain_used else 34), (game.trap_exit,32)]:
             if cell in game.visible or game.reveal_all:
