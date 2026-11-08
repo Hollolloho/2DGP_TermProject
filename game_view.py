@@ -24,11 +24,12 @@ class View:
             'terrain': 'sprite/topdown/terrain.png', 'actors': 'sprite/topdown/actors.png',
             'terrain_v2': 'sprite/topdown/terrain_v2/terrain.png',
             'guardian': 'sprite/topdown/guardian_v2/guardian.png',
+            'shortcuts': 'sprite/topdown/shortcuts_v2/shortcuts.png',
             'walls': 'sprite/wall/sheets/base_a.png',
             'ceiling': 'sprite/surfaces/parts/ceiling/Limestone_Top-2048x512.png',
             'floor': 'sprite/surfaces/parts/floor/Limestone_Bottom-2048x512.png',
         }.items():
-            self.images[name] = self.load(path, pixel=name in ('terrain','terrain_v2','actors','guardian'))
+            self.images[name] = self.load(path, pixel=name in ('terrain','terrain_v2','actors','guardian','shortcuts'))
         for name in ('torch', 'sword-slash'):
             data = json.loads((self.root/f'sprite/topdown/effects/{name}.json').read_text())
             self.images[name] = self.load(f'sprite/topdown/effects/{name}.png', pixel=True)
@@ -70,13 +71,13 @@ class View:
         p.SDL_SetRenderDrawBlendMode(p.renderer, p.SDL_BLENDMODE_NONE)
         p.SDL_RenderClear(p.renderer)
 
-    def image(self, name, rect, source=None, tint=(255, 255, 255), angle=0):
+    def image(self, name, rect, source=None, tint=(255, 255, 255), angle=0, flip=False):
         image = self.images[name]
         p.SDL_SetTextureColorMod(image.texture, *tint)
         dst = p.SDL_Rect(*(round(v) for v in rect))
         src = p.SDL_Rect(*source) if source else None
-        if angle:
-            p.SDL_RenderCopyEx(p.renderer, image.texture, src, dst, angle, None, p.SDL_FLIP_NONE)
+        if angle or flip:
+            p.SDL_RenderCopyEx(p.renderer, image.texture, src, dst, angle, None, p.SDL_FLIP_HORIZONTAL if flip else p.SDL_FLIP_NONE)
         else:
             p.SDL_RenderCopy(p.renderer, image.texture, src, dst)
 
@@ -121,6 +122,51 @@ class View:
         self.rectangle(x-5,y-6,11,1,color)
         self.text(label,x-3,y,color)
 
+    @staticmethod
+    def shortcut_mount(game, cell):
+        # Anchor the threshold on the adjacent wall, preserving the floor/interaction cell.
+        for dx,dy,facing in ((0,-1,'south'),(-1,0,'east'),(1,0,'west'),(0,1,'north')):
+            if game.solid(cell[0]+dx,cell[1]+dy):
+                return cell[0]+.5+dx*.48,cell[1]+.5+dy*.48,facing
+        return cell[0]+.5,cell[1]+.5,'south'
+
+    def shortcut(self, game, cell, kind='trap', state='entry', arrival=False):
+        _,_,facing=self.shortcut_mount(game,cell)
+        dx,dy={'south':(0,-1),'east':(-1,0),'west':(1,0),'north':(0,1)}[facing]
+        wx,wy=cell[0]+dx,cell[1]+dy
+        if not game.solid(wx,wy):
+            return
+        opened=state in ('open','arrival')
+        source=((int(opened)+(0 if kind=='puzzle' else 2))*96,0,96,96)
+        angle={'south':0,'east':-90,'west':90,'north':180}[facing]
+        sx,sy=self.world(wx-1,wy-1)
+        tile=TILE*self.world_scale
+        # Only the opening/rim pixels are overlaid. Existing wall pixels remain the base.
+        # Clip each touched tile so a frame/button cannot paint over a floor or unknown cell.
+        for y in range(wy-1,wy+2):
+            for x in range(wx-1,wx+2):
+                if not game.solid(x,y) or not (game.reveal_all or (x,y) in game.visible):
+                    continue
+                tx,ty=self.world(x,y)
+                left,top=max(8,tx),max(32,ty)
+                right,bottom=min(504,tx+tile),min(400,ty+tile)
+                if right<=left or bottom<=top:
+                    continue
+                p.SDL_RenderSetClipRect(p.renderer,p.SDL_Rect(round(left),round(top),round(right-left),round(bottom-top)))
+                _,tint=self.tile_tint(game,x,y)
+                self.image('shortcuts',(sx,sy,tile*3,tile*3),source,tint,angle=angle)
+        p.SDL_RenderSetClipRect(p.renderer,p.SDL_Rect(8,32,496,368))
+
+    @staticmethod
+    def tile_tint(game,x,y):
+        visible=(x,y) in game.visible
+        brightness=1.0 if visible else .80 if game.reveal_all else .32
+        phase_tint=((.94,.96,1.),(.70,.79,.94),(.82,.90,.96))[game.phase]
+        if visible and game.player.torch:
+            glow=max(0.,1.-math.hypot(x+.5-game.player.x,y+.5-game.player.y)/7.)
+            phase_tint=tuple(min(1.,c+warm*glow) for c,warm in zip(phase_tint,(.30,.13,0.)))
+        return brightness,tuple(round(255*brightness*c) for c in phase_tint)
+
     def effect(self, name, x, y, seconds, scale=1, angle=0):
         data = self.effects[name]
         meta = data['meta']['pixelfx']
@@ -155,12 +201,7 @@ class View:
                     index = mask
                 else:
                     index = 16+((x*7+y*11+game.seed)%8)
-                brightness = 1.0 if visible else .80 if game.reveal_all else .32
-                phase_tint = ((.94,.96,1.),(.70,.79,.94),(.82,.90,.96))[game.phase]
-                if visible and game.player.torch:
-                    glow=max(0.,1.-math.hypot(x+.5-game.player.x,y+.5-game.player.y)/7.)
-                    phase_tint=tuple(min(1.,c+warm*glow) for c,warm in zip(phase_tint,(.30,.13,0.)))
-                tint = tuple(round(255*brightness*c) for c in phase_tint)
+                brightness,tint=self.tile_tint(game,x,y)
                 sx,sy=self.world(x,y)
                 if sx+size<8 or sx>504 or sy+size<32 or sy>400:
                     continue
@@ -173,13 +214,15 @@ class View:
                             self.rectangle(sx,sy+depth*self.world_scale,size,self.world_scale,(8,12,14,round(alpha*weight)))
                     if game.solid(x-1,y):
                         self.rectangle(sx,sy,2*self.world_scale,size,(8,12,14,round(alpha*.45)))
-        for cell, index in [(game.trap_cell,32), (game.exit,36),
-                            (game.fountain,35 if game.fountain_used else 34), (game.trap_exit,32)]:
+        for cell, index in [(game.exit,36),(game.fountain,35 if game.fountain_used else 34)]:
             if cell in game.visible or game.reveal_all:
                 sx,sy=self.world(*cell)
                 self.tile(index,sx-2*self.world_scale,sy-2*self.world_scale,size=20*self.world_scale)
-                if cell in (game.trap_cell,game.trap_exit):
-                    self.badge('A' if cell==game.trap_cell else 'B',sx+size+6,sy+size/2,(218,175,107) if cell==game.trap_cell else (127,197,183))
+        for cell,arrival in ((game.trap_cell,False),(game.trap_exit,True)):
+            if cell in game.visible or game.reveal_all:
+                self.shortcut(game,cell,state='arrival' if arrival else 'entry',arrival=arrival)
+                sx,sy=self.world(*cell)
+                self.badge('B' if arrival else 'A',sx+size+6,sy+size/2,(127,197,183) if arrival else (218,175,107))
         if not game.player.torch and (game.torch_cell in game.visible or game.reveal_all):
             x,y = game.torch_cell
             sx,sy=self.world(x+.5,y+.8)
