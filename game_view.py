@@ -194,6 +194,40 @@ class View:
                 u=41+min(14,max(0,int((x-38)*15/20)))
                 v=48+min(15,max(0,int((y-12)*16/20)))
             actions.append((x,y+32,'fill',frame*96+u,v,alpha))
+        if puzzle:
+            # Carve a compact stone arch out of the existing wall texture; no facade decal.
+            for y in range(5,32):
+                for x in range(36,61):
+                    if (x,y) in coverage:continue
+                    radius=math.hypot(x+.5-48,y+.5-16)
+                    ring=(y<16 and 8<=radius<11.5) or (y>=16 and (37<=x<40 or 56<=x<59))
+                    if not ring:continue
+                    if y<16:
+                        sector=math.atan2(16-y-.5,x+.5-48)/(math.pi/7)
+                        joint=abs(sector-round(sector))<.075
+                    else:
+                        joint=y in (20,26)
+                    # Each arch stone uses the original wall's stone grain at native 1:1 scale.
+                    if not joint:
+                        actions.append((x,y+32,'stone',5+(x%4),3+(y%4),255))
+                        if y<16 and radius>10.2:
+                            actions.append((x,y+32,'shade',255,255,28))
+                    else:
+                        actions.append((x,y+32,'shade',0,0,120))
+            # Small central keystone with the selected three-notch motif.
+            for y in range(4,9):
+                for x in range(45,52):
+                    notch=x in (46,48,50) and y in (5,6)
+                    edge=x in (45,51) or y==8
+                    dark=notch or edge
+                    if not dark:actions.append((x,y+32,'stone',5+x%4,3+y%4,255))
+                    actions.append((x,y+32,'shade',0 if dark else 255,0 if dark else 255,
+                                    125 if notch else 52 if edge else 24))
+            if frame==0:
+                # Two stone leaves and a narrow central seam distinguish the closed slab.
+                for y in range(14,31):
+                    actions.append((48,y+32,'shade',0,0,85))
+                    actions.append((47,y+32,'shade',255,255,24))
         # A one-pixel bevel shades the existing wall texture, preserving its mortar and grain.
         for y in range(6,32):
             for x in range(35,62):
@@ -203,11 +237,14 @@ class View:
                 elif (x-1,y) in coverage or (x,y+1) in coverage:
                     actions.append((x,y+32,'shade',0,0,42))
         if puzzle:
-            for y in range(16,21):
-                for x in range(67,72):
-                    border=x in (67,71) or y in (16,20)
-                    actions.append((x,y+32,'shade',0 if border or frame==1 else 255,0 if border or frame==1 else 255,
-                                    70 if border else 45 if frame==1 else 18))
+            for y in range(15,22):
+                for x in range(66,73):
+                    border=x in (66,72) or y in (15,21)
+                    if not border:
+                        actions.append((x,y+32,'stone',5+x%4,3+y%4,255 if frame==0 else 190))
+                        actions.append((x,y+32,'shade',255 if frame==0 else 0,255 if frame==0 else 0,24))
+                    else:
+                        actions.append((x,y+32,'shade',0,0,125))
         turned=[]
         for x,y,*action in actions:
             if facing=='east':x,y=y,95-x
@@ -232,6 +269,8 @@ class View:
                 if action=='fill':
                     p.SDL_SetTextureAlphaMod(self.images['shortcuts'].texture,c)
                     self.image('shortcuts',(x,y,1,1),(a,b,1,1))
+                elif action=='stone':
+                    self.image('terrain_v2',(x,y,1,1),(mask*32+a,variant*32+b,1,1),(c,c,c))
                 else:
                     self.rectangle(x,y,1,1,(a,a,b,c))
             p.SDL_SetTextureBlendMode(texture,p.SDL_BLENDMODE_NONE)
