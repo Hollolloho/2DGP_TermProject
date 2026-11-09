@@ -37,6 +37,7 @@ class Practice:
         self.ball_z=-3.0
         self.ball_speed=self.ball_distance=0.0
         self.contacts=0
+        self.ball_touching=False
         self.hit_until=self.notice_until=0.0
         self.look_back=self.blocked=self.running=False
         self.paused=False
@@ -94,13 +95,14 @@ class Practice:
             movement=self.ball_speed*dt
             self.ball_z+=movement
             self.ball_distance+=movement
-            if self.gap<=0:
+            touching=abs(self.z-self.ball_z)<=RADIUS+PLAYER_RADIUS
+            if touching and not self.ball_touching:
                 self.contacts+=1
                 self.hit_until=self.time+.45
                 self.notice_until=self.time+2.2
-                # Practice-only: retain player position/resources, put the rock
-                # behind again so contact never becomes a death/soft-lock.
-                self.ball_z=self.z-RADIUS-PLAYER_RADIUS-8
+            # Invulnerability changes the damage result, never the trajectory.
+            # Count only entry into overlap, including a later genuine recontact.
+            self.ball_touching=touching
         for name,side,z,half in EXITS:
             if side*self.x>1.32 and abs(self.z-z)<half:
                 self.exit_used=name;self.finish();self.vx=self.vz=0
@@ -142,7 +144,8 @@ class View:
         speed=min(1,math.hypot(g.vx,g.vz)/4.7)
         eye=1.55+math.sin(g.stride*7)*(.024 if g.running else .014)*speed
         hit=max(0,(g.hit_until-g.time)/.45)
-        pressure=max(0,1-g.gap/7) if g.state=='chasing' else 0
+        distance=max(0,abs(g.z-g.ball_z)-RADIUS-PLAYER_RADIUS)
+        pressure=max(0,1-distance/7) if g.state=='chasing' else 0
         cx=self.w/2+math.sin(g.time*66)*(hit*5+pressure*1.8)
         return (-g.x,LENGTH-g.z,eye,cx,self.h*.46) if g.look_back else (g.x,g.z,eye,cx,self.h*.46)
 
@@ -226,7 +229,7 @@ class View:
                   [(0,0),(1,0),(1,1),(0,1)],tuple(round(c*end_shade) for c in (160,166,151)))
         for name,side,z,_ in sorted(EXITS,key=lambda entry:abs(entry[2]-g.z),reverse=True):self.exit(g,name,side,z)
         objects=[('obstacle',entry[2],entry) for entry in OBSTACLES]
-        objects.append(('boulder',g.ball_z,None))
+        if g.ball_z<LENGTH+1.3:objects.append(('boulder',g.ball_z,None))
         direction=-1 if g.look_back else 1
         objects.sort(key=lambda item:direction*(item[1]-g.z),reverse=True)
         for kind,z,entry in objects:
@@ -238,6 +241,9 @@ class View:
                 self.billboard(g,'props',prop['rect_top_left'],prop['pivot'],prop['world_frame_size_metres'],x,z,tint)
             else:
                 index=int(g.ball_distance/RADIUS/math.tau*24)%24
+                # The same world rotation approaches the rear camera but rolls
+                # away from the front camera after passing the player.
+                if not g.look_back:index=(-index)%24
                 size=RADIUS*2*512/472
                 self.billboard(g,'boulder',self.catalog['boulder']['frames'][index]['rect_top_left'],[256,492],
                                [size,size],0,z,tint)
@@ -248,18 +254,21 @@ class View:
         self.rect(0,0,w,72,(12,17,18,245));self.rect(0,h-100,w,100,(12,17,18,235))
         self.text('돌 추격 · 무적 연습',24,10,big=False)
         if g.state=='ready':status=f'{max(0,5-g.time):.1f}초 후 돌 출발 · 먼저 이동하세요'
-        else:status='뒤를 보는 중 · 이동 방향은 그대로' if g.look_back else '좌우로 장애물을 피하고 측면 출구로 탈출'
+        elif g.look_back:status='뒤를 보는 중 · 이동 방향은 그대로'
+        elif g.ball_z>g.z+RADIUS+PLAYER_RADIUS:status='돌이 앞서갑니다 · 계속 이동해서 출구로 탈출'
+        else:status='좌우로 장애물을 피하고 측면 출구로 탈출'
         self.text(status,285,10)
         self.text('WASD / 방향키 이동   Shift 달리기   Q 누르는 동안 뒤 보기   F 출구 이용   R 재시작   Esc 종료',24,41,(162,174,166))
         self.text(f'스태미너 {g.stamina:03.0f}',24,h-92)
         self.rect(24,h-59,250,12,(44,47,43));self.rect(24,h-59,250*g.stamina/100,12,(171,177,104))
-        gap=max(0,g.gap)
-        self.text(f'후방 여유 {gap:.1f} m',320,h-92,(226,149,110) if gap<5 else (205,198,173))
+        gap=max(0,abs(g.z-g.ball_z)-RADIUS-PLAYER_RADIUS)
+        distance_label=('앞쪽 돌' if g.ball_z>g.z else '후방 여유') if gap>0 else '돌 통과 중'
+        self.text(f'{distance_label} {gap:.1f} m',320,h-92,(226,149,110) if gap<5 else (205,198,173))
         self.rect(320,h-59,220,12,(44,47,43));self.rect(320,h-59,220*min(1,gap/18),12,(186,117,78))
         self.text(f'진행 {g.z:.1f} / {LENGTH:.0f} m   돌 접촉 {g.contacts}회 · HP 100 고정',580,h-92)
         self.text('왼쪽 46m 좁은 출구 / 오른쪽 52m 넓은 출구',580,h-59,(166,184,174))
         if g.exit_nearby() and g.state!='clear':self.text('F  출구 통과',w/2-100,h*.63,(235,218,146),big=True)
-        elif g.notice_until>g.time:self.text('돌 접촉 · 무적 적용 / 돌 간격 재설정',w/2-240,h*.28,(244,167,126))
+        elif g.notice_until>g.time:self.text('돌 접촉 · 무적 적용 / 돌은 계속 전진',w/2-240,h*.28,(244,167,126))
         elif g.blocked:self.text('장애물 · 옆으로 돌아가세요',w/2-180,h*.72,(217,182,130))
         if g.state=='clear':
             self.rect(w/2-360,h/2-130,720,240,(10,17,17,235))
@@ -311,7 +320,8 @@ class App:
         g=self.g
         data={'mode':g.state,'time':round(g.time,2),'position':[round(g.x,3),round(g.z,3)],
               'stamina':round(g.stamina,2),'hp':g.hp,'contacts':g.contacts,'gap':round(g.gap,2),
-              'look_back':g.look_back,'exit':g.exit_used,'paused':g.paused,
+              'ball_z':round(g.ball_z,3),'ball_touching':g.ball_touching,
+              'version':'pass-through-v2','look_back':g.look_back,'exit':g.exit_used,'paused':g.paused,
               'window_flags':int(self.p.SDL_GetWindowFlags(self.p.window)),'pid':os.getpid()}
         OUTPUT.mkdir(parents=True,exist_ok=True)
         (OUTPUT/'session.json').write_text(json.dumps(data,indent=2),encoding='utf-8')
@@ -335,8 +345,12 @@ def smoke(app):
     inject(p,p.SDLK_q);app.events();app.update(.025)
     assert g.look_back
     app.view.draw(g);app.view.capture(OUTPUT/'02-look-back.png')
+    while g.ball_z<g.z+3.5:app.update(.025)
+    inject(p,p.SDLK_q,False);app.events();app.update(.025)
+    assert g.contacts==1 and g.hp==100 and g.ball_z>g.z+RADIUS+PLAYER_RADIUS
+    app.view.draw(g);app.view.capture(OUTPUT/'03-ball-passed-front.png')
     for _ in range(500):app.update(.025)
-    assert g.contacts>0 and g.hp==100 and g.state=='chasing'
+    assert g.contacts==1 and g.hp==100 and g.state=='chasing' and g.ball_z>g.z
     app.view.draw(g);app.view.capture(OUTPUT/'03-invulnerable.png')
     inject(p,p.SDLK_r);app.events()
     assert g.state=='ready' and g.stamina==100 and g.contacts==0
@@ -347,6 +361,7 @@ def smoke(app):
     app.status()
     (OUTPUT/'smoke.json').write_text(json.dumps({'passed':True,'native_sdl_inputs':['W','Shift','Q','R','F'],
         'movement':True,'stamina_consumes':True,'rear_view':True,'contact_never_kills':True,
+        'ball_continues_past_player':True,'one_contact_per_overlap':True,
         'restart':True,'exit':True,'resolution':[app.view.w,app.view.h]},indent=2),encoding='utf-8')
 
 

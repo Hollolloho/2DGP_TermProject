@@ -22,8 +22,26 @@ def main():
     g=Practice();steps(g,4.9)
     assert g.state=='ready' and g.ball_z==-3
     steps(g,.2);assert g.state=='chasing' and g.ball_z>-3
-    steps(g,60);assert g.hp==100 and g.contacts>=8 and g.state=='chasing'
+    previous_z=g.ball_z
+    for _ in range(3000):
+        g.update(.02)
+        assert g.ball_z>=previous_z,'boulder moved backwards after contact'
+        previous_z=g.ball_z
+    assert g.hp==100 and g.contacts==1 and g.state=='chasing' and g.ball_z>g.z+20
+    assert not g.ball_touching,'boulder should have left the player overlap'
     stationary_contacts=g.contacts
+    # Remaining inside one overlap must not count again each frame.
+    g.reset();steps(g,5.2)
+    g.ball_z=g.z
+    g.update(.02)
+    assert g.contacts==1
+    for _ in range(10):g.update(.02)
+    assert g.contacts==1 and g.ball_touching
+    steps(g,2)
+    assert not g.ball_touching and g.contacts==1
+    # A deliberate later recontact may count once again.
+    g.z=g.ball_z;g.update(.02)
+    assert g.contacts==2
     g.reset();g.x=1.35;steps(g,4.5,forward=1,sprint=True)
     assert g.stamina==0 and g.hp==100
     before=g.z;steps(g,.5,forward=1,sprint=True)
@@ -41,7 +59,9 @@ def main():
     routes=[route(style,exit_name) for style in ('walk','timed','held') for exit_name in ('narrow','wide')]
     assert routes[2]['contacts']<routes[0]['contacts'],'timed sprint did not improve this fixed reference route'
     assert routes[2]['stamina']>routes[4]['stamina'],'timed sprint did not preserve resources against held sprint'
-    report={'passed':True,'stationary_60s_contacts_survived':stationary_contacts,'empty_stamina_walks':True,
+    report={'passed':True,'stationary_60s_contacts_survived':stationary_contacts,
+            'ball_never_moves_backwards':True,'one_contact_per_overlap':True,'later_recontact_counts':True,
+            'empty_stamina_walks':True,
             'obstacle_collision_and_bypass':True,'both_exits_reachable':True,'rear_view_preserves_input':True,
             'routes':routes,'note':'Reference steering routes, not a complete balance or human playtest.'}
     OUTPUT.mkdir(parents=True,exist_ok=True)
