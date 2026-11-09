@@ -1,6 +1,7 @@
 """Rules + complete-course checks: python check_boulder_practice.py."""
-import json
+import json,math
 from boulder_practice import Practice,OBSTACLES,OUTPUT
+from boulder_volume import stone_mesh,rolled_pose
 
 def steps(g,seconds,**inputs):
     for _ in range(round(seconds/.02)):g.update(.02,**inputs)
@@ -19,6 +20,17 @@ def route(sprint_style,exit_name):
     return {'exit':g.exit_used,'time':round(g.time,2),'contacts':g.contacts,'stamina':round(g.stamina,2)}
 
 def main():
+    vertices,indices=stone_mesh(1.35)
+    assert all(abs(sum(n*n for n in vertex[5:])-1)<1e-10 for vertex in vertices)
+    for i in range(48):
+        world,centre_y,contact=rolled_pose(vertices,1.35,i/48*math.tau*1.35,7)
+        assert abs(min(vertex[1] for vertex in world))<1e-12 and contact[1]==0
+    start,_,_=rolled_pose(vertices,1.35,0,7)
+    end,_,_=rolled_pose(vertices,1.35,math.tau*1.35,7)
+    assert max(abs(a-b) for va,vb in zip(start,end) for a,b in zip(va,vb))<1e-11
+    first,_,_=rolled_pose(vertices,1.35,1,7)
+    next_pose,_,_=rolled_pose(vertices,1.35,1.005,7)
+    assert 0<max(abs(a-b) for va,vb in zip(first,next_pose) for a,b in zip(va[:3],vb[:3]))<.02
     g=Practice();steps(g,4.9)
     assert g.state=='ready' and g.ball_z==-3
     steps(g,.2);assert g.state=='chasing' and g.ball_z>-3
@@ -60,6 +72,7 @@ def main():
     assert routes[2]['contacts']<routes[0]['contacts'],'timed sprint did not improve this fixed reference route'
     assert routes[2]['stamina']>routes[4]['stamina'],'timed sprint did not preserve resources against held sprint'
     report={'passed':True,'stationary_60s_contacts_survived':stationary_contacts,
+            'continuous_rotating_surface':True,'fixed_ground_contact_48_phases':True,
             'ball_never_moves_backwards':True,'one_contact_per_overlap':True,'later_recontact_counts':True,
             'empty_stamina_walks':True,
             'obstacle_collision_and_bypass':True,'both_exits_reachable':True,'rear_view_preserves_input':True,
