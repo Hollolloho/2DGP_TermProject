@@ -117,7 +117,8 @@ class View:
         for name,path in [('raw_wall',ROOT/'sprite/wall/materials/base_a.png'),
                           ('raw_floor',ROOT/'sprite/surfaces/materials/floor_flagstone.png'),
                           ('raw_ceiling',ROOT/'sprite/surfaces/materials/ceiling_damp.png'),
-                          ('boulder',ASSETS/'boulder.png'),('props',ASSETS/'obstacles.png'),
+                          ('raw_boulder',Path(os.environ.get('BOULDER_MATERIAL',ROOT/'sprite/traps/boulder_volume_v2/stone_material.png'))),
+                          ('props',ASSETS/'obstacles.png'),
                           ('exits',ASSETS/'exits.png'),('dust',ASSETS/'dust.png')]:
             im=p.load_image(str(path));self.images[name]=im
             p.SDL_SetTextureScaleMode(im.texture,p.SDL_ScaleModeLinear)
@@ -139,6 +140,8 @@ class View:
         self.planes=corridor.Corridor.__new__(corridor.Corridor)
         self.planes.view=self
         self.vertex=struct.Struct('<ffBBBBff')
+        from boulder_volume import Boulder
+        self.rock=Boulder(self,self.images['raw_boulder'],RADIUS)
 
     def camera(self,g):
         speed=min(1,math.hypot(g.vx,g.vz)/4.7)
@@ -219,6 +222,7 @@ class View:
                       [((rx+rw*a)/im.w,0),((rx+rw*b)/im.w,0),((rx+rw*b)/im.w,1),((rx+rw*a)/im.w,1)],tint)
 
     def draw(self,g):
+        draw_started=time.perf_counter()
         p=self.p;w,h=self.w,self.h
         p.SDL_SetRenderTarget(p.renderer,self.canvas)
         p.SDL_SetRenderDrawColor(p.renderer,8,11,11,255);p.SDL_RenderClear(p.renderer)
@@ -228,28 +232,23 @@ class View:
         self.quad(g,'raw_wall',[(-1.8,3,LENGTH+1.3),(1.8,3,LENGTH+1.3),(1.8,0,LENGTH+1.3),(-1.8,0,LENGTH+1.3)],
                   [(0,0),(1,0),(1,1),(0,1)],tuple(round(c*end_shade) for c in (160,166,151)))
         for name,side,z,_ in sorted(EXITS,key=lambda entry:abs(entry[2]-g.z),reverse=True):self.exit(g,name,side,z)
+        if g.ball_z<LENGTH+1.3:self.rock.shadow(g)
         objects=[('obstacle',entry[2],entry) for entry in OBSTACLES]
         if g.ball_z<LENGTH+1.3:objects.append(('boulder',g.ball_z,None))
         direction=-1 if g.look_back else 1
         objects.sort(key=lambda item:direction*(item[1]-g.z),reverse=True)
         for kind,z,entry in objects:
-            if direction*(z-g.z)<.10:continue
+            if direction*(z-g.z)<(.10 if kind=='obstacle' else -self.rock.max_radius):continue
             shade=math.exp(-.045*abs(z-g.z))
             tint=tuple(round(c*shade) for c in (220,215,197))
             if kind=='obstacle':
                 name,x,z,_,_=entry;prop=self.catalog['props'][name]
                 self.billboard(g,'props',prop['rect_top_left'],prop['pivot'],prop['world_frame_size_metres'],x,z,tint)
             else:
-                index=int(g.ball_distance/RADIUS/math.tau*24)%24
-                # The same world rotation approaches the rear camera but rolls
-                # away from the front camera after passing the player.
-                if not g.look_back:index=(-index)%24
-                size=RADIUS*2*512/472
-                self.billboard(g,'boulder',self.catalog['boulder']['frames'][index]['rect_top_left'],[256,492],
-                               [size,size],0,z,tint)
-                if g.state=='chasing':
-                    dust=self.catalog['dust']['frames'][int(g.time*16)%12]
-                    self.billboard(g,'dust',dust['rect_top_left'],[256,230],[2.6,1.3],0,z+direction*.02,(185,177,155))
+                self.rock.dust(g,front=False)
+                self.rock.body(g)
+                self.rock.dust(g,front=True)
+        if g.ball_z<LENGTH+1.3:self.rock.inside_overlay(g)
         if g.hit_until>g.time:self.rect(0,72,w,h-72,(160,28,19,round(70*(g.hit_until-g.time)/.45)))
         self.rect(0,0,w,72,(12,17,18,245));self.rect(0,h-100,w,100,(12,17,18,235))
         self.text('돌 추격 · 무적 연습',24,10,big=False)
@@ -281,6 +280,7 @@ class View:
             self.text('일시 정지 · 게임 창을 클릭하면 재개',w/2-215,h/2-15,(223,211,176))
         p.SDL_SetRenderTarget(p.renderer,None)
         p.SDL_RenderCopy(p.renderer,self.canvas,None,None)
+        self.last_draw_ms=(time.perf_counter()-draw_started)*1000
 
     def capture(self,path):
         p=self.p;path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
@@ -292,6 +292,7 @@ class View:
         finally:p.SDL_FreeSurface(surface);p.SDL_SetRenderTarget(p.renderer,None)
 
     def close(self):
+        self.rock.close()
         self.images.clear();self.text_cache.clear();self.font=self.big=None
         self.p.SDL_DestroyTexture(self.canvas)
 
@@ -321,7 +322,8 @@ class App:
         data={'mode':g.state,'time':round(g.time,2),'position':[round(g.x,3),round(g.z,3)],
               'stamina':round(g.stamina,2),'hp':g.hp,'contacts':g.contacts,'gap':round(g.gap,2),
               'ball_z':round(g.ball_z,3),'ball_touching':g.ball_touching,
-              'version':'pass-through-v2','look_back':g.look_back,'exit':g.exit_used,'paused':g.paused,
+              'version':'volume-v3','look_back':g.look_back,'exit':g.exit_used,'paused':g.paused,
+              'frame_draw_ms':round(getattr(self.view,'last_draw_ms',0),2),
               'window_flags':int(self.p.SDL_GetWindowFlags(self.p.window)),'pid':os.getpid()}
         OUTPUT.mkdir(parents=True,exist_ok=True)
         (OUTPUT/'session.json').write_text(json.dumps(data,indent=2),encoding='utf-8')
@@ -384,7 +386,7 @@ def main():
     try:
         app=App(p,args.width,args.height)
         if args.smoke:smoke(app);return
-        last=time.perf_counter();next_status=0
+        last=time.perf_counter();next_status=0;captured_launch=False
         while app.running:
             now=time.perf_counter();dt=min(.05,now-last);last=now
             app.events()
@@ -394,7 +396,7 @@ def main():
             app.view.draw(app.g);p.SDL_RenderPresent(p.renderer)
             if now>=next_status:
                 app.status()
-                if not (OUTPUT/'launched.png').exists():app.view.capture(OUTPUT/'launched.png')
+                if not captured_launch:app.view.capture(OUTPUT/'launched.png');captured_launch=True
                 next_status=now+1
             p.delay(.001)
     finally:
