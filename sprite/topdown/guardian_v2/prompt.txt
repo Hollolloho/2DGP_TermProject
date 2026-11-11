@@ -1,8 +1,0 @@
-OpenAI built-in image generation, 2026-11-06.
-References: project's current top-down stone dungeon for material/scale, old guardian for identity only.
-Original worn labyrinth sentinel, compact realistic anatomy, corroded charcoal iron armor, brown rust,
-chipped bronze edges, tattered dark fabric, battered closed helmet, no human face, small bronze round
-shield in left hand and low-held iron mace in right. High-angle orthographic RPG top-down view,
-visible helmet/shoulder tops, natural bent-knee idle stance, crisp hand-painted pixel-informed detail.
-Four equal transparent quadrants: down, left, right, up. Consistent body scale and ground position,
-transparent padding, feet at 84% quadrant height, faint contact shadow. No labels, UI or floor platform.
