@@ -16,21 +16,24 @@ class View:
         self.root = Path(root)
         self.images, self.effects = {}, {}
         self.text_cache={}
-        self.shortcut_cache,self.shortcut_designs={},{}
+        self.atlases, self.pending_assets = {}, []
         self.small = p.load_font('C:/Windows/Fonts/malgun.ttf', 10)
         self.font = p.load_font('C:/Windows/Fonts/malgun.ttf', 12)
         self.title = p.load_font('C:/Windows/Fonts/malgunbd.ttf', 17)
         self.big = p.load_font('C:/Windows/Fonts/malgunbd.ttf', 46)
-        for name, path in {
-            'terrain': 'sprite/topdown/terrain.png', 'actors': 'sprite/topdown/actors.png',
-            'terrain_v2': 'sprite/topdown/terrain_v2/terrain.png',
-            'guardian': 'sprite/topdown/guardian_v2/guardian.png',
-            'shortcuts': 'sprite/topdown/shortcuts_v2/shortcuts.png',
-            'walls': 'sprite/wall/sheets/base_a.png',
-            'ceiling': 'sprite/surfaces/parts/ceiling/Limestone_Top-2048x512.png',
-            'floor': 'sprite/surfaces/parts/floor/Limestone_Bottom-2048x512.png',
-        }.items():
-            self.images[name] = self.load(path, pixel=name in ('terrain','terrain_v2','actors','guardian','shortcuts'))
+        player = Path('sprite/quarter/player_explorer_v1')
+        self.player_catalog = json.loads((self.root/player/'explorer.json').read_text(encoding='utf-8'))
+        self.images['player'] = self.load(player/self.player_catalog['image'], pixel=True)
+        for name, folder in (('props', 'props_v1'), ('guardian', 'guardian_v1'),
+                             ('shortcuts', 'shortcuts_v1')):
+            directory = Path('sprite/quarter')/folder
+            catalog = self.root/directory/'catalog.json'
+            if not catalog.is_file():
+                self.pending_assets.append(name)
+                continue
+            data = json.loads(catalog.read_text(encoding='utf-8'))
+            self.images[name] = self.load(directory/data['image'], pixel=True)
+            self.atlases[name] = data['frames']
         for name in ('torch', 'sword-slash'):
             data = json.loads((self.root/f'sprite/topdown/effects/{name}.json').read_text())
             self.images[name] = self.load(f'sprite/topdown/effects/{name}.png', pixel=True)
@@ -46,6 +49,16 @@ class View:
         p.SDL_SetTextureScaleMode(image.texture, p.SDL_ScaleModeNearest if pixel else p.SDL_ScaleModeLinear)
         p.SDL_SetTextureBlendMode(image.texture, p.SDL_BLENDMODE_BLEND)
         return image
+
+    def atlas(self, name, frame, x, y, scale=1, tint=(255, 255, 255)):
+        if name not in self.atlases:
+            return False
+        item = self.atlases[name][frame]
+        sx, sy, w, h = item['rect']
+        px, py = item['pivot']
+        self.image(name, (x-px*scale, y-py*scale, w*scale, h*scale),
+                   (sx, sy, w, h), tint)
+        return True
 
     @staticmethod
     def target(w, h):
@@ -101,19 +114,32 @@ class View:
 
     def tile(self, index, x, y, tint=(255, 255, 255), size=16, variant=0):
         if index<24:
-            source=(index*32,(variant%4)*32,32,32) if index<16 else ((index-16)*32,128,32,32)
-            self.image('terrain_v2',(x,y,size,size),source,tint)
+            # ponytail: keep square material cells until the quarter-view coordinate change;
+            # placing diamond terrain on this grid would show gaps at solid boundaries.
+            self.image('raw_wall' if index<16 else 'raw_floor', (x,y,size,size), tint=tint)
+            if index<16:
+                self.rectangle(x,y+size-2,size,2,(6,10,11,180))
         else:
-            self.image('terrain', (x, y, size, size), ((index%16)*16, (index//16)*16, 16, 16), tint)
+            frame = {34:'fountain_full', 35:'fountain_empty', 36:'rope_exit'}[index]
+            if not self.atlas('props', frame, x+size/2, y+size/2, size/64, tint):
+                color = (90,170,186) if index==34 else (75,80,83) if index==35 else (222,197,126)
+                self.rectangle(x+size*.2,y+size*.2,size*.6,size*.6,color)
+                if index==36:
+                    self.line(x+size/2,y-size/2,x+size/2,y+size*.7,(230,211,167))
 
     def actor(self, x, y, direction, step=0, guardian=False, tint=(255, 255, 255)):
         scale=self.world_scale
         if guardian:
-            self.image('guardian',(x-16*scale,y-28*scale,32*scale,32*scale),
-                       (direction*64,0,64,64),tint)
+            facing=('sw','nw','se','ne')[direction]
+            if not self.atlas('guardian', 'idle_'+facing, x, y, scale*.5, tint):
+                self.rectangle(x-6*scale,y-16*scale,12*scale,16*scale,(123,130,125))
+                self.rectangle(x-4*scale,y-21*scale,8*scale,6*scale,(176,152,111))
         else:
-            self.image('actors',(x-16*scale,y-24*scale,32*scale,32*scale),
-                       ((direction*3+step)*32,0,32,32),tint)
+            # ponytail: idle art only here; state/timing integration is the next task.
+            facing=('sw','nw','se','ne')[direction]
+            frame=self.player_catalog['clips']['idle-'+facing]['frames'][0]['rect']
+            px,py=self.player_catalog['pivot']
+            self.image('player',(x-px*scale*.5,y-py*scale*.5,32*scale,32*scale),tuple(frame),tint)
 
     def world(self, x, y):
         return self.origin[0]+x*TILE*self.world_scale,self.origin[1]+y*TILE*self.world_scale
@@ -132,225 +158,16 @@ class View:
         return cell[0]+.5,cell[1]+.5,'south'
 
     def shortcut(self, game, cell, kind='trap', state='entry', arrival=False):
-        _,_,facing=self.shortcut_mount(game,cell)
-        dx,dy={'south':(0,-1),'east':(-1,0),'west':(1,0),'north':(0,1)}[facing]
-        wx,wy=cell[0]+dx,cell[1]+dy
-        if not game.solid(wx,wy):
-            return
-        opened=state in ('open','arrival')
-        frame=int(opened)+(0 if kind=='puzzle' else 2)
-        design_key=frame,facing
-        if design_key not in self.shortcut_designs:
-            self.shortcut_designs[design_key]=self.shortcut_design(frame,facing)
-        design=self.shortcut_designs[design_key]
-        parts={(a[0]//32,a[1]//32) for a in design if not a[2].startswith('debris-')}
-        debris_parts={(a[0]//32,a[1]//32) for a in design if a[2].startswith('debris-')}
-        tile=TILE*self.world_scale
-        # Compose opaque native-resolution wall tiles once; use exactly the wall grid/filter.
-        for y in range(wy-1,wy+2):
-            for x in range(wx-1,wx+2):
-                part=x-wx+1,y-wy+1
-                debris=not game.solid(x,y)
-                if part not in (debris_parts if debris else parts):
-                    continue
-                if not (game.reveal_all or (x,y) in game.visible):
-                    continue
-                tx,ty=self.world(x,y)
-                left,top=max(8,tx),max(32,ty)
-                right,bottom=min(504,tx+tile),min(400,ty+tile)
-                if right<=left or bottom<=top:
-                    continue
-                p.SDL_RenderSetClipRect(p.renderer,p.SDL_Rect(round(left),round(top),round(right-left),round(bottom-top)))
-                mask=sum(bit for dx,dy,bit in ((0,-1,1),(1,0,2),(0,1,4),(-1,0,8)) if game.solid(x+dx,y+dy))
-                variant=(x*3+y*5+game.seed)%4
-                image=self.shortcut_tile(15 if debris else mask,variant,frame,facing,part,design,debris)
-                _,tint=self.tile_tint(game,x,y)
-                p.SDL_SetTextureColorMod(image.texture,*tint)
-                p.SDL_RenderCopy(p.renderer,image.texture,None,p.SDL_Rect(round(tx),round(ty),round(tile),round(tile)))
-        p.SDL_RenderSetClipRect(p.renderer,p.SDL_Rect(8,32,496,368))
-
-    @staticmethod
-    def shortcut_design(frame,facing):
-        """Only reuse the door interior. The generated masonry rim is intentionally excluded."""
-        puzzle=frame<2
-        def inside(x,y):
-            if puzzle:
-                if not 8<=y<32:return False
-                half=math.sqrt(max(0,8**2-(y-16)**2)) if y<16 else 8
-                return 48-half<=x<48+half
-            if not 5<=y<32:return False
-            course=min(6,int(y-5)//4)
-            left=(46,42,38,39,37,38,36)[course]
-            right=(53,57,59,57,58,60,58)[course]
-            return left<=x<right
-        coverage={}
-        for y in range(3,32):
-            for x in range(35,62):
-                count=sum(inside(x+ox,y+oy) for ox in (.25,.75) for oy in (.25,.75))
-                if count:coverage[x,y]=round(255*count/4)
-        actions=[]
-        for (x,y),alpha in coverage.items():
-            if puzzle:
-                u=43+min(10,max(0,int((x-40)*11/16)))
-                v=43+min(19,max(0,int((y-8)*20/24)))
-            else:
-                u=41+min(14,max(0,int((x-38)*15/20)))
-                v=48+min(15,max(0,int((y-5)*16/27)))
-            actions.append((x,y+32,'fill',frame*96+u,v,alpha))
-        if puzzle:
-            # Carve a compact stone arch out of the existing wall texture; no facade decal.
-            for y in range(3,32):
-                for x in range(34,63):
-                    if (x,y) in coverage:continue
-                    radius=math.hypot(x+.5-48,y+.5-16)
-                    ring=(y<16 and 8<=radius<14) or (y>=16 and (34<=x<40 or 56<=x<62))
-                    if not ring:continue
-                    if y<16:
-                        sector=math.atan2(16-y-.5,x+.5-48)/(math.pi/7)
-                        joint=abs(sector-round(sector))<.065
-                    else:
-                        joint=y in (20,26)
-                    # Each arch stone uses the original wall's stone grain at native 1:1 scale.
-                    if not joint:
-                        actions.append((x,y+32,'stone',5+(x%4),3+(y%4),255))
-                        actions.append((x,y+32,'shade',255,255,36))
-                        if y<16 and 11.0<radius<11.8:
-                            actions.append((x,y+32,'shade',0,0,48))
-                        elif y<16 and radius>12.2:
-                            actions.append((x,y+32,'shade',255,255,24))
-                    else:
-                        actions.append((x,y+32,'shade',0,0,100))
-            # Small central keystone with the selected three-notch motif.
-            for y in range(2,9):
-                for x in range(45,52):
-                    notch=x in (46,48,50) and y in (3,4,5)
-                    edge=x in (45,51) or y==8
-                    dark=notch or edge
-                    if not dark:actions.append((x,y+32,'stone',5+x%4,3+y%4,255))
-                    actions.append((x,y+32,'shade',0 if dark else 255,0 if dark else 255,
-                                    125 if notch else 52 if edge else 24))
-            if frame==0:
-                # Two stone leaves and a narrow central seam distinguish the closed slab.
-                for y in range(14,31):
-                    actions.append((48,y+32,'shade',0,0,85))
-                    actions.append((47,y+32,'shade',255,255,24))
-        else:
-            # Local fractures stay in the original masonry, rather than a new surrounding wall.
-            cracks=((41,4),(40,3),(39,3),(38,2),(59,8),(60,7),(62,7),(63,5),(37,19),(36,18))
-            for x,y in cracks:
-                actions.append((x,y+32,'shade',0,0,76))
-            for ox,oy,rows in ((40,5,(' ++  ','+####',' ###.','  .. ')),
-                               (55,8,('  ++ ','####+',' ###.','  .. '))):
-                for dy,row in enumerate(rows):
-                    for dx,mark in enumerate(row):
-                        if mark==' ':continue
-                        x,y=ox+dx,oy+dy
-                        if mark!='.':actions.append((x,y+32,'stone',5+x%4,3+y%4,240))
-                        if mark in ('+','.'):
-                            light=mark=='+'
-                            actions.append((x,y+32,'shade',255 if light else 0,255 if light else 0,30 if light else 78))
-            for (x,y) in coverage:
-                if (x-1,y) not in coverage and y in (10,11,14,15,22,23,27):
-                    actions.append((x,y+32,'stone',5+x%4,3+y%4,210))
-                    actions.append((x,y+32,'shade',255,255,14))
-                elif (x+1,y) not in coverage and y in (13,14,20,21,28):
-                    actions.append((x,y+32,'stone',5+x%4,3+y%4,170))
-            if frame==2:
-                # Remnant of a sagging old lintel, sampled only from the original beam pixels.
-                for x in range(40,58):
-                    beam_y=8 if x<45 or x>52 else 9
-                    for h in range(2):
-                        u=41+min(14,int((x-40)*15/18))
-                        actions.append((x,beam_y+32+h,'fill',frame*96+u,44+h,255))
-                for x in (42,55):
-                    for y in range(7,12):actions.append((x,y+32,'shade',0,0,105))
-            # Two broken stones resting at the sill; no floor/background patch is copied.
-            for ox,oy,rows in ((35,27,('  ++ ',' +###','#####',' ###.','  .. ')),
-                               (56,28,(' ++  ','+### ','####.',' ... '))):
-                for dy,row in enumerate(rows):
-                    for dx,mark in enumerate(row):
-                        if mark==' ':continue
-                        x,y=ox+dx,oy+dy
-                        if mark!='.':actions.append((x,y+32,'stone',5+x%4,3+y%4,230))
-                        if mark in ('+','.'):
-                            light=mark=='+'
-                            actions.append((x,y+32,'shade',255 if light else 0,255 if light else 0,24 if light else 70))
-            for start in (64,68,72):
-                for step in range(3):
-                    x,y=start+(2-step)//2,19+step
-                    actions.append((x,y+32,'shade',0,0,87))
-                    actions.append((x+1,y+32,'shade',255,255,19))
-            # Small separate rubble sprites, with transparent surroundings on the floor.
-            for ox,oy,rows in ((34,65,('  ++   ',' +#### ','#######',' ####..','  ...  ')),
-                               (56,64,(' ++   ','+#### ','######',' ####.','  ... ')),
-                               (42,71,(' ++ ','####',' ...'))):
-                for dy,row in enumerate(rows):
-                    for dx,mark in enumerate(row):
-                        if mark==' ':continue
-                        x,y=ox+dx,oy+dy
-                        if mark!='.':actions.append((x,y,'debris-stone',5+x%4,3+y%4,235))
-                        if mark in ('+','.'):
-                            light=mark=='+'
-                            actions.append((x,y,'debris-shade',255 if light else 0,255 if light else 0,28 if light else 65))
-        # A one-pixel bevel shades the existing wall texture, preserving its mortar and grain.
-        for y in range(6,32):
-            for x in range(35,62):
-                if (x,y) in coverage:continue
-                if (x+1,y) in coverage:
-                    actions.append((x,y+32,'shade',255,255,13))
-                elif (x-1,y) in coverage or (x,y+1) in coverage:
-                    actions.append((x,y+32,'shade',0,0,42))
-        if puzzle:
-            for y in range(15,22):
-                for x in range(66,73):
-                    border=x in (66,72) or y in (15,21)
-                    if not border:
-                        actions.append((x,y+32,'stone',5+x%4,3+y%4,255 if frame==0 else 190))
-                        actions.append((x,y+32,'shade',255 if frame==0 else 0,255 if frame==0 else 0,24))
-                    else:
-                        actions.append((x,y+32,'shade',0,0,125))
-        turned=[]
-        for x,y,*action in actions:
-            if facing=='east':x,y=y,95-x
-            elif facing=='west':x,y=95-y,x
-            elif facing=='north':x,y=95-x,95-y
-            turned.append((x,y,*action))
-        return turned
-
-    def shortcut_tile(self,mask,variant,frame,facing,part,design,debris=False):
-        key=mask,variant,frame,facing,part,debris
-        if key in self.shortcut_cache:return self.shortcut_cache[key]
-        previous=p.SDL_GetRenderTarget(p.renderer)
-        clipped=p.SDL_RenderIsClipEnabled(p.renderer)
-        clip=p.SDL_Rect();p.SDL_RenderGetClipRect(p.renderer,ctypes.byref(clip))
-        texture=self.target(32,32)
-        try:
-            p.SDL_SetRenderTarget(p.renderer,texture);p.SDL_RenderSetClipRect(p.renderer,None)
-            if debris:self.clear((0,0,0,0))
-            else:self.image('terrain_v2',(0,0,32,32),(mask*32,variant*32,32,32))
-            for x,y,action,a,b,c in design:
-                if (x//32,y//32)!=part:continue
-                if action.startswith('debris-')!=debris:continue
-                action=action.removeprefix('debris-')
-                x,y=x%32,y%32
-                if action=='fill':
-                    p.SDL_SetTextureAlphaMod(self.images['shortcuts'].texture,c)
-                    self.image('shortcuts',(x,y,1,1),(a,b,1,1))
-                elif action=='stone':
-                    self.image('terrain_v2',(x,y,1,1),(mask*32+a,variant*32+b,1,1),(c,c,c))
-                else:
-                    self.rectangle(x,y,1,1,(a,a,b,c))
-            p.SDL_SetTextureBlendMode(texture,p.SDL_BLENDMODE_BLEND if debris else p.SDL_BLENDMODE_NONE)
-            image=p.Image(texture)
-            self.shortcut_cache[key]=image
-            return image
-        except Exception:
-            p.SDL_DestroyTexture(texture)
-            raise
-        finally:
-            p.SDL_SetTextureAlphaMod(self.images['shortcuts'].texture,255)
-            p.SDL_SetRenderTarget(p.renderer,previous)
-            p.SDL_RenderSetClipRect(p.renderer,ctypes.byref(clip) if clipped else None)
+        _, _, facing = self.shortcut_mount(game, cell)
+        frame = ('puzzle_' + ('open' if state == 'open' else 'closed') if kind == 'puzzle'
+                 else 'trap_' + ('arrival' if arrival else 'entry')) + '_' + facing
+        x, y = self.world(cell[0]+.5, cell[1]+.5)
+        scale = self.world_scale*.5
+        if not self.atlas('shortcuts', frame, x, y, scale):
+            size = TILE*self.world_scale
+            self.rectangle(x-size*.35,y-size*.45,size*.7,size*.8,(24,29,28))
+            color = (127,197,183) if arrival else (218,175,107)
+            self.rectangle(x-size*.35,y-size*.45,size*.7,2,color)
 
     @staticmethod
     def tile_tint(game,x,y):
@@ -474,7 +291,7 @@ class View:
     def hud(self, game, fps=0):
         self.rectangle(0,0,640,30,(12,18,22))
         self.text('초보자를 위한 미로 탈출 안내서',10,14,size='font')
-        self.text('HYBRID VIEW · 시제품',383,14,(156,156,128))
+        self.text('탑뷰 검사 · 쿼터뷰 미연결',365,14,(156,156,128))
         self.rectangle(512,30,128,370,(16,23,27))
         self.rectangle(512,30,1,370,(71,77,70))
         self.text('함정방 · 1인칭' if game.state=='trap' else '미궁 탐색 · 탑뷰',523,49,size='font')
@@ -563,8 +380,7 @@ class View:
             p.SDL_SetRenderTarget(p.renderer,None)
 
     def close(self):
-        self.shortcut_cache.clear()
-        self.shortcut_designs.clear()
+        self.atlases.clear()
         self.images.clear()
         self.effects.clear()
         self.text_cache.clear()
