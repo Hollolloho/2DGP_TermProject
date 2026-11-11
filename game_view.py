@@ -4,13 +4,15 @@ import json
 import math
 from pathlib import Path
 import pico2d.pico2d as p
-from maze_model import COLS, ROWS, PHASES, DIRECTIONS, TRAP_LENGTH
+from maze_model import BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS, COLS, ROWS, PHASES, DIRECTIONS, TRAP_LENGTH
 from trap_view import Corridor
 
 LW, LH, SCALE = 640, 400, 2
 MAP_RECT = (8, 32, 496, 368)
 HALF_TILE_W, HALF_TILE_H = 32, 16
 WALL_NEIGHBORS = ((0, -1, 1), (1, 0, 2), (0, 1, 4), (-1, 0, 8))
+MEMORY_LIGHT = .32
+LIGHT_FADE_SECONDS = .20
 
 
 def project(x, y):
@@ -47,6 +49,8 @@ class View:
         self.corridor = Corridor(self)
         self.origin, self.world_scale = (0, 0), 1
         self.camera, self.camera_game = None, None
+        self.light_game, self.light_time, self.torch_light = None, 0., 0.
+        self.discovery, self.exposure = {}, {}
         self.animated_player, self.animation_state, self.animation_started = None, None, 0
         self.last_mode, self.mode_changed = None, -10
 
@@ -56,13 +60,13 @@ class View:
         p.SDL_SetTextureBlendMode(image.texture, p.SDL_BLENDMODE_BLEND)
         return image
 
-    def atlas(self, x, y, name, frame, tint=(255, 255, 255)):
+    def atlas(self, x, y, name, frame, tint=(255, 255, 255), opacity=1.):
         item = self.atlases[name][frame]
         sx, sy, w, h = item['rect']
         px, py = item['pivot']
         scale = self.world_scale
         self.image(name, (x-px*scale, y-py*scale, w*scale, h*scale),
-                   (sx, sy, w, h), tint)
+                   (sx, sy, w, h), tint, alpha=round(255*opacity))
 
     @staticmethod
     def target(w, h):
@@ -89,15 +93,21 @@ class View:
         p.SDL_SetRenderDrawBlendMode(p.renderer, p.SDL_BLENDMODE_NONE)
         p.SDL_RenderClear(p.renderer)
 
-    def image(self, name, rect, source=None, tint=(255, 255, 255), angle=0, flip=False):
+    def image(self, name, rect, source=None, tint=(255, 255, 255), angle=0, flip=False, alpha=255):
+        if not alpha:
+            return
         image = self.images[name]
         p.SDL_SetTextureColorMod(image.texture, *tint)
+        if alpha != 255:
+            p.SDL_SetTextureAlphaMod(image.texture, alpha)
         dst = p.SDL_Rect(*(round(v) for v in rect))
         src = p.SDL_Rect(*source) if source else None
         if angle or flip:
             p.SDL_RenderCopyEx(p.renderer, image.texture, src, dst, angle, None, p.SDL_FLIP_HORIZONTAL if flip else p.SDL_FLIP_NONE)
         else:
             p.SDL_RenderCopy(p.renderer, image.texture, src, dst)
+        if alpha != 255:
+            p.SDL_SetTextureAlphaMod(image.texture, 255)
 
     def text(self, text, x, y, color=(199, 203, 189), size='small'):
         key=(text,color,size)
@@ -209,15 +219,56 @@ class View:
         frame = ('trap_arrival_' if arrival else 'trap_entry_')+facing
         self.atlas(x, y, 'shortcuts', frame, tint)
 
-    @staticmethod
-    def tile_tint(game,x,y):
-        visible=(x,y) in game.visible
-        brightness=1.0 if visible else .80 if game.reveal_all else .32
+    def update_lighting(self, game):
+        if game is not self.light_game:
+            self.light_game = game
+            self.light_time = game.time
+            self.torch_light = float(game.player.torch)
+            self.discovery = dict.fromkeys(game.observed, 1.)
+            self.exposure = dict.fromkeys(game.visible, 1.)
+        step = min(1., max(0., game.time-self.light_time)/LIGHT_FADE_SECONDS)
+        self.light_time = game.time
+        self.torch_light = min(1., self.torch_light+step) if game.player.torch else max(0., self.torch_light-step)
+        for cell in game.observed:
+            self.discovery[cell] = min(1., self.discovery.get(cell, 0.)+step)
+            exposure = self.exposure.get(cell, 0.)
+            self.exposure[cell] = min(1., exposure+step) if cell in game.visible else max(0., exposure-step)
+
+    def terrain_light(self, game, x, y):
+        reach = BASE_SIGHT_RADIUS+(TORCH_SIGHT_RADIUS-BASE_SIGHT_RADIUS)*self.torch_light
+        distance = math.hypot(x+.5-game.player.x, y+.5-game.player.y)
+        # Smoothstep across the outer 60% of the radius, with a full-light center.
+        edge = max(0., min(1., (reach-distance)/(.6*reach)))
+        radial = edge*edge*(3.-2.*edge)
+        light = radial*self.exposure.get((x, y), 0.)
+        brightness = self.discovery.get((x, y), 0.)*(MEMORY_LIGHT+(1.-MEMORY_LIGHT)*light)
+        if game.reveal_all:
+            brightness = 1. if (x, y) in game.visible else .8
         phase_tint=((.94,.96,1.),(.70,.79,.94),(.82,.90,.96))[game.phase]
-        if visible and game.player.torch:
-            glow=max(0.,1.-math.hypot(x+.5-game.player.x,y+.5-game.player.y)/7.)
-            phase_tint=tuple(min(1.,c+warm*glow) for c,warm in zip(phase_tint,(.30,.13,0.)))
-        return tuple(round(255*brightness*c) for c in phase_tint)
+        if self.torch_light:
+            phase_tint = tuple(min(1., c+warm*light*self.torch_light) for c, warm in zip(phase_tint, (.30,.13,0.)))
+        return tuple(round(255*c) for c in phase_tint), brightness
+
+    def tile_tint(self, game, x, y):
+        tint, brightness = self.terrain_light(game, x, y)
+        return tuple(round(channel*brightness) for channel in tint)
+
+    def terrain(self, x, y, frame, tint, brightness):
+        if brightness > 0:
+            self.atlas(x, y, 'terrain', frame, tint)
+        if brightness < 1:
+            # Shade only the sprite's shape. The underlying wall stays opaque.
+            self.atlas(x, y, 'terrain', frame, (0, 0, 0), 1.-brightness)
+
+    def wall_mask(self, game, x, y):
+        mask = 0
+        for dx, dy, bit in WALL_NEIGHBORS:
+            nx, ny = x+dx, y+dy
+            if 0 <= nx < COLS and 0 <= ny < ROWS and game.grid[ny][nx]:
+                # Keep the end cap until the neighboring wall has faded in.
+                if game.reveal_all or self.discovery.get((nx, ny)) == 1.:
+                    mask |= bit
+        return mask
 
     def effect(self, name, x, y, seconds, scale=1, angle=0):
         data = self.effects[name]
@@ -233,8 +284,9 @@ class View:
                    (frame['x'], frame['y'], frame['w'], frame['h']), angle=angle)
 
     def quarter(self, game):
-        self.clear()
+        self.clear((0, 0, 0, 255))
         self.position_camera(game)
+        self.update_lighting(game)
         left, top, width, height = MAP_RECT
         p.SDL_RenderSetClipRect(p.renderer, p.SDL_Rect(*MAP_RECT))
         scene = []
@@ -247,14 +299,12 @@ class View:
             sx, sy = self.world(x+.5, y+.5)
             if not (left-32 <= sx <= left+width+32 and top-16 <= sy <= top+height+80):
                 continue
-            tint = self.tile_tint(game, x, y)
+            tint, brightness = self.terrain_light(game, x, y)
             variant = (x*3+y*5+game.seed) % 4
-            self.atlas(sx, sy, 'terrain', f'floor_{variant}', tint)
+            self.terrain(sx, sy, f'floor_{variant}', tint, brightness)
             if game.grid[y][x]:
-                # Close the exposed wall face at the edge of explored terrain.
-                mask = sum(bit for dx, dy, bit in WALL_NEIGHBORS
-                           if (x+dx, y+dy) in drawn_cells and game.grid[y+dy][x+dx])
-                place(self.atlas, x+.5, y+.5, 'terrain', f'wall_{mask}', tint)
+                mask = self.wall_mask(game, x, y)
+                place(self.terrain, x+.5, y+.5, f'wall_{mask}', tint, brightness)
 
         for (x, y), frame in ((game.exit, 'rope_exit'), (game.torch_cell, 'torch_stand'),
                               (game.fountain, 'fountain_empty' if game.fountain_used else 'fountain_full')):

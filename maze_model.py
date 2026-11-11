@@ -6,6 +6,7 @@ import random
 from transitions import Machine
 
 COLS, ROWS = 31, 23
+BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS = 5.5, 7
 DIRECTIONS = ((0, 1), (-1, 0), (1, 0), (0, -1))  # down, left, right, up
 PHASES = ('낮', '밤', '새벽')
 TRAP_LENGTH, TRAP_HALF_WIDTH, TRAP_HEIGHT = 9.0, 1.6, 3.0
@@ -161,7 +162,7 @@ class Game:
 
     def update_visibility(self):
         player, visible = self.player, set()
-        reach = 7 if player.torch else 5.5
+        reach = TORCH_SIGHT_RADIUS if player.torch else BASE_SIGHT_RADIUS
         for y in range(max(0, int(player.y-reach)), min(ROWS, math.ceil(player.y+reach))):
             for x in range(max(0, int(player.x-reach)), min(COLS, math.ceil(player.x+reach))):
                 dx, dy = x+.5-player.x, y+.5-player.y
