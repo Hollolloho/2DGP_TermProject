@@ -6,6 +6,7 @@ import random
 from transitions import Machine
 
 COLS, ROWS = 31, 23
+BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS = 5.5, 7
 DIRECTIONS = ((0, 1), (-1, 0), (1, 0), (0, -1))  # down, left, right, up
 PHASES = ('낮', '밤', '새벽')
 TRAP_LENGTH, TRAP_HALF_WIDTH, TRAP_HEIGHT = 9.0, 1.6, 3.0
@@ -161,7 +162,7 @@ class Game:
 
     def update_visibility(self):
         player, visible = self.player, set()
-        reach = 7 if player.torch else 5.5
+        reach = TORCH_SIGHT_RADIUS if player.torch else BASE_SIGHT_RADIUS
         for y in range(max(0, int(player.y-reach)), min(ROWS, math.ceil(player.y+reach))):
             for x in range(max(0, int(player.x-reach)), min(COLS, math.ceil(player.x+reach))):
                 dx, dy = x+.5-player.x, y+.5-player.y
@@ -274,20 +275,28 @@ class Game:
         if self.map_open:
             dx = dy = 0
         magnitude = math.hypot(dx, dy)
+        running = sprint and self.player.stamina > 0
+        vx = vy = 0.
         if magnitude:
-            if abs(dx) > abs(dy):
-                self.player.direction = 2 if dx > 0 else 1
-            elif dy:
-                self.player.direction = 0 if dy > 0 else 3
-            running = sprint and self.player.stamina > 0
             speed = 4.1 if running else 2.5
             vx, vy = dx/magnitude*dt*speed, dy/magnitude*dt*speed
             if self.can_stand(self.player.x+vx, self.player.y):
                 self.player.x += vx
+            else:
+                vx = 0
             if self.can_stand(self.player.x, self.player.y+vy):
                 self.player.y += vy
+            else:
+                vy = 0
             if running:
                 self.player.stamina = max(0, self.player.stamina-dt*18)
+        if vx or vy:
+            # A screen-axis move ties two clips. Keep the current one if it fits.
+            alignment = [vx*x+vy*y for x, y in DIRECTIONS]
+            best = max(alignment)
+            if alignment[self.player.direction] < best:
+                self.player.direction = alignment.index(best)
+            if running:
                 self.player.sprint_now()
             else:
                 self.player.walk_now()
