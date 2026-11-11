@@ -375,7 +375,7 @@ class View:
         if game.state=='trap':
             lines=['W / S  전진·후진','A / D  칼날 회피','Esc  입장 전 복귀',f'진행 {int(game.trap_progress*100)}%']
         else:
-            lines=['WASD / 방향키 이동','Shift  달리기','좌클릭  검 공격','F  상호작용','M  방문 지도','V  시야 / 전체 보기','R  새 회차','F10  화면 저장','Esc  창 닫기']
+            lines=['WASD  화면 상하좌우','두 키 조합  대각선','Shift  달리기','좌클릭  검 공격','F  상호작용','M  방문 지도','V  시야 / 전체 보기','R  새 회차','F10  화면 저장','Esc  창 닫기']
         for i,line in enumerate(lines):
             self.text(line,523,215+i*16,(175,183,175))
         if game.reveal_all and game.state=='explore':

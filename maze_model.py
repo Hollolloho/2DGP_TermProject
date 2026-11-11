@@ -275,20 +275,28 @@ class Game:
         if self.map_open:
             dx = dy = 0
         magnitude = math.hypot(dx, dy)
+        running = sprint and self.player.stamina > 0
+        vx = vy = 0.
         if magnitude:
-            if abs(dx) > abs(dy):
-                self.player.direction = 2 if dx > 0 else 1
-            elif dy:
-                self.player.direction = 0 if dy > 0 else 3
-            running = sprint and self.player.stamina > 0
             speed = 4.1 if running else 2.5
             vx, vy = dx/magnitude*dt*speed, dy/magnitude*dt*speed
             if self.can_stand(self.player.x+vx, self.player.y):
                 self.player.x += vx
+            else:
+                vx = 0
             if self.can_stand(self.player.x, self.player.y+vy):
                 self.player.y += vy
+            else:
+                vy = 0
             if running:
                 self.player.stamina = max(0, self.player.stamina-dt*18)
+        if vx or vy:
+            # A screen-axis move ties two clips. Keep the current one if it fits.
+            alignment = [vx*x+vy*y for x, y in DIRECTIONS]
+            best = max(alignment)
+            if alignment[self.player.direction] < best:
+                self.player.direction = alignment.index(best)
+            if running:
                 self.player.sprint_now()
             else:
                 self.player.walk_now()
