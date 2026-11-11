@@ -1,6 +1,6 @@
 # 돌 추격 무적 연습
 
-`돌추격_무적연습.pyw`를 더블클릭하거나 프로젝트 루트에서 `python boulder_practice.py`로 실행한다. 기존 `main.py`와 분리된 **실제 키보드 조작용 함정방 테스트**다. Python·pico2d·transitions와 기존 복도 렌더러 및 `sprite/traps/boulder_chase_v1` 에셋을 사용한다. 추가 설치는 없다.
+`돌추격_무적연습.pyw`를 더블클릭하거나 프로젝트 루트에서 `python boulder_practice.py`로 실행한다. 기존 `main.py`와 분리된 **실제 키보드 조작용 함정방 테스트**다. Python·pico2d·transitions와 기존 복도 렌더러·원본 재질을 사용한다. `sprite/traps/boulder_chase_v1`은 먼지만 제공하며 새 장애물·출구는 `sprite/traps/boulder_room_v2/catalog.json`으로 연결한다. 제작 중에는 실제 충돌 범위와 출구 폭에 맞춘 석재 도형을 표시한다.
 
 | 조작 | 동작 |
 | --- | --- |
@@ -39,7 +39,7 @@ python boulder_practice.py --smoke --width 1920 --height 1080
 
 `output/boulder_practice/rules_checks.json`, `smoke.json`, `01-moving.png`~`04-complete.png`에 결과를 저장한다. `session.json`은 실행 중인 실제 창의 위치·스태미너·접촉 횟수·프로세스 ID와 SDL 창 상태를 1초 간격으로 기록한다. 자동 경로 검사는 사람의 난도 평가를 대신하지 않는다.
 
-원래 게임 소스·PRD와 에셋 원본은 이 연습을 추가하면서 변경하지 않았다. 기능을 주차별로 개발하기 전 사용자가 요청한 플레이 검증을 위해 별도 실행 파일을 추가했다.
+에셋 연결 규격은 `ASSET_TASKS.md`를 따른다. 장애물·출구 카탈로그와 먼지 카탈로그는 분리하며, 임시 도형 표시는 완성 에셋으로 간주하지 않는다.
 
 ## 돌 표현 개선 v3 — 2026-11-06
 
@@ -50,10 +50,8 @@ python boulder_practice.py --smoke --width 1920 --height 1080
 - 완전한 공 모양에 넓고 얕은 요철을 추가하고, 회전할 때마다 가장 낮은 지점이 바닥에 닿도록 높이를 맞춘다.
 - 바닥 위의 부드러운 접지 그림자와 밑면 음영을 더하고, 회전하는 표면의 법선과 시점에 따른 조명을 계산한다.
 - 큰 먼지 그림 한 장 대신 접지 부근에서 작은 먼지와 잔돌이 뒤에 남는 표현을 사용한다.
-- 새 재질은 `sprite/traps/boulder_volume_v2/stone_material.png`다. 큰 균열이 보여 회전 방향을 알아보기 쉽도록 만들었다. 기존 v1 시트와 원본은 보관한다.
+- 새 재질은 `sprite/traps/boulder_volume_v2/stone_material.png`다. 큰 균열이 보여 회전 방향을 알아보기 쉽도록 만들었다. 구형 돌 시트는 제거했고 먼지는 별도 유지한다.
 
 게임 규칙은 v2와 동일하다. 돌은 5초 뒤 한 개가 출발하며, 무적 접촉 뒤에도 계속 전진한다. 스태미너·이동 속도·장애물 충돌·출구 조건을 이 표현 개선에서 변경하지 않았다.
 
-실제 Direct3D의 1440×900 비교 장면 48프레임에서 CPU 그리기 및 present 시간 중앙값 약 13.7ms, 95백분위 약 17.3ms를 기록했다. 이는 전체 플레이에서 고정 FPS를 보장하는 수치는 아니다. 1920×1080 SDL 입력·렌더링 검사, 좌우 시점 3개, 전후방 근접 교차 10개, 연속 회전·360° 복원·48각도 접지 검사도 수행했다.
-
-추가 시각 검사 도구는 `sprite/traps/boulder_volume_v2/tools/check_visuals.py`다. `--native`로 실제 렌더러를 검사한다. PNG·JSON 검사는 기존 Python 의존성만 사용하며, `--gif` 옵션만 검증 도구용 Pillow가 필요하다. 비교 영상은 동일 입력값으로 배치한 시각 검증 장면이며 사람의 실제 플레이 녹화는 아니다.
+현재 돌의 시각 검사는 `sprite/traps/boulder_volume_v2/tools/check_visuals.py`다. 구형 평면 돌·삭제된 사물 시트를 불러오던 비교 경로는 제거했다. 이 도구는 현재 표현의 연속 회전·접지·좌우 시점·전후방 근접 교차와 그리기 시간을 검사한다. `--native`는 실제 그래픽 렌더러를 선택하며 기본값은 창이 없는 검사다. 최종 성능·난도는 에셋 통합 후 실제 플레이로 확인한다.
