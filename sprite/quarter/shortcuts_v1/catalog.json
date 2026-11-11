@@ -1,0 +1,197 @@
+{
+  "image": "shortcuts.png",
+  "frames": {
+    "puzzle_closed_south": {
+      "rect": [
+        0,
+        0,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    },
+    "puzzle_closed_east": {
+      "rect": [
+        128,
+        0,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    },
+    "puzzle_closed_north": {
+      "rect": [
+        256,
+        0,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    },
+    "puzzle_closed_west": {
+      "rect": [
+        384,
+        0,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    },
+    "puzzle_open_south": {
+      "rect": [
+        0,
+        128,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    },
+    "puzzle_open_east": {
+      "rect": [
+        128,
+        128,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    },
+    "puzzle_open_north": {
+      "rect": [
+        256,
+        128,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    },
+    "puzzle_open_west": {
+      "rect": [
+        384,
+        128,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    },
+    "trap_entry_south": {
+      "rect": [
+        0,
+        256,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    },
+    "trap_entry_east": {
+      "rect": [
+        128,
+        256,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    },
+    "trap_entry_north": {
+      "rect": [
+        256,
+        256,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    },
+    "trap_entry_west": {
+      "rect": [
+        384,
+        256,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    },
+    "trap_arrival_south": {
+      "rect": [
+        0,
+        384,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    },
+    "trap_arrival_east": {
+      "rect": [
+        128,
+        384,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    },
+    "trap_arrival_north": {
+      "rect": [
+        256,
+        384,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    },
+    "trap_arrival_west": {
+      "rect": [
+        384,
+        384,
+        128,
+        128
+      ],
+      "pivot": [
+        64,
+        96
+      ]
+    }
+  }
+}

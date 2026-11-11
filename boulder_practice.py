@@ -11,6 +11,7 @@ from transitions import Machine
 
 ROOT=Path(os.environ.get('MAZE_PROJECT',Path(__file__).resolve().parent))
 ASSETS=ROOT/'sprite/traps/boulder_chase_v1'
+ROOM_ASSETS=ROOT/'sprite/traps/boulder_room_v2'
 OUTPUT=Path(os.environ.get('BOULDER_OUTPUT',ROOT/'output/boulder_practice'))
 LENGTH=52.0
 HALF_WIDTH=1.8
@@ -118,12 +119,24 @@ class View:
                           ('raw_floor',ROOT/'sprite/surfaces/materials/floor_flagstone.png'),
                           ('raw_ceiling',ROOT/'sprite/surfaces/materials/ceiling_damp.png'),
                           ('raw_boulder',Path(os.environ.get('BOULDER_MATERIAL',ROOT/'sprite/traps/boulder_volume_v2/stone_material.png'))),
-                          ('props',ASSETS/'obstacles.png'),
-                          ('exits',ASSETS/'exits.png'),('dust',ASSETS/'dust.png')]:
+                          ('dust',ASSETS/'dust.png')]:
             im=p.load_image(str(path));self.images[name]=im
             p.SDL_SetTextureScaleMode(im.texture,p.SDL_ScaleModeLinear)
             p.SDL_SetTextureBlendMode(im.texture,p.SDL_BLENDMODE_BLEND)
         self.catalog=json.loads((ASSETS/'catalog.json').read_text())
+        self.room_ready=(ROOM_ASSETS/'catalog.json').is_file()
+        if self.room_ready:
+            room=json.loads((ROOM_ASSETS/'catalog.json').read_text(encoding='utf-8'))
+            for name in ('props','exits'):
+                entries=room[name]
+                filenames={entry['image'] for entry in entries.values()}
+                if len(filenames)!=1:
+                    raise ValueError(f'{name}: one atlas image required')
+                im=p.load_image(str(ROOM_ASSETS/filenames.pop()))
+                self.images[name]=im
+                p.SDL_SetTextureScaleMode(im.texture,p.SDL_ScaleModeLinear)
+                p.SDL_SetTextureBlendMode(im.texture,p.SDL_BLENDMODE_BLEND)
+                self.catalog[name]=entries
         self.font=p.load_font('C:/Windows/Fonts/malgun.ttf',20)
         self.big=p.load_font('C:/Windows/Fonts/malgunbd.ttf',42)
         self.text_cache={}
@@ -205,21 +218,49 @@ class View:
         self.quad(g,name,points,uv,tint)
 
     def exit(self,g,name,side,z):
-        im=self.images['exits'];entry=self.catalog['exits'][name]
-        rx,_,rw,rh=entry['rect_top_left'];w,h=entry['world_frame_size_metres']
-        floor=-h*24/1024;top=floor+h
         x=side*HALF_WIDTH
-        il,ir,it=(.344,.66,.212) if name=='narrow' else (.155,.852,.25)
-        za,zb=z-w/2+w*il,z-w/2+w*ir
         def corners(a,b,y0,y1,xpos=x):return [(xpos,y1,a),(xpos,y1,b),(xpos,y0,b),(xpos,y0,a)]
-        self.quad(g,None,corners(za,zb,0,top-h*it),[(0,0)]*4,(13,17,16))
-        self.quad(g,None,corners(za+.02,zb-.02,0,.12),[(0,0)]*4,(31,33,27))
         shade=math.exp(-.04*abs(z-g.z))
         tint=tuple(round(c*shade) for c in (195,194,178))
+        if not self.room_ready:
+            # ponytail: use retained stone and the real opening widths until art is ready.
+            half=next(half for exit_name,_,_,half in EXITS if exit_name==name)
+            self.quad(g,None,corners(z-half,z+half,0,1.9),[(0,0)]*4,(13,17,16))
+            for a,b,y0,y1 in ((z-half-.16,z-half,0,2.06),
+                              (z+half,z+half+.16,0,2.06),(z-half,z+half,1.9,2.06)):
+                self.quad(g,'raw_wall',corners(a,b,y0,y1,x-side*.004),
+                          [(0,0),(1,0),(1,1),(0,1)],tint)
+            return
+        im=self.images['exits'];entry=self.catalog['exits'][name]
+        rx,ry,rw,rh=entry['rect_top_left'];w,h=entry['world_frame_size_metres']
+        floor=-h*(rh-entry['pivot'][1])/rh;top=floor+h
+        il,it,ir,ib=entry['opening_uv']
+        za,zb=z-w/2+w*il,z-w/2+w*ir
+        self.quad(g,None,corners(za,zb,top-h*ib,top-h*it),[(0,0)]*4,(13,17,16))
         for index in range(24):
             a,b=index/24,(index+1)/24
             self.quad(g,'exits',corners(z-w/2+w*a,z-w/2+w*b,floor,top,x-side*.004),
-                      [((rx+rw*a)/im.w,0),((rx+rw*b)/im.w,0),((rx+rw*b)/im.w,1),((rx+rw*a)/im.w,1)],tint)
+                      [((rx+rw*a)/im.w,ry/im.h),((rx+rw*b)/im.w,ry/im.h),
+                       ((rx+rw*b)/im.w,(ry+rh)/im.h),((rx+rw*a)/im.w,(ry+rh)/im.h)],tint)
+
+    def obstacle(self,g,entry,tint):
+        name,x,z,half_width,half_depth=entry
+        if self.room_ready:
+            prop=self.catalog['props'][name]
+            self.billboard(g,'props',prop['rect_top_left'],prop['pivot'],
+                           prop['world_frame_size_metres'],x,z,tint)
+            return
+        left,right=x-half_width,x+half_width
+        near,far=z-half_depth,z+half_depth
+        height=.64 if name=='fallen_column' else .58
+        faces=[[(left,height,near),(right,height,near),(right,height,far),(left,height,far)],
+               [(left,height,far),(left,height,near),(left,0,near),(left,0,far)],
+               [(right,height,near),(right,height,far),(right,0,far),(right,0,near)]]
+        front,back=(far,near) if g.look_back else (near,far)
+        for depth in (back,front):
+            faces.append([(left,height,depth),(right,height,depth),(right,0,depth),(left,0,depth)])
+        for points in faces:
+            self.quad(g,'raw_wall',points,[(0,0),(1,0),(1,1),(0,1)],tint)
 
     def draw(self,g):
         draw_started=time.perf_counter()
@@ -242,8 +283,7 @@ class View:
             shade=math.exp(-.045*abs(z-g.z))
             tint=tuple(round(c*shade) for c in (220,215,197))
             if kind=='obstacle':
-                name,x,z,_,_=entry;prop=self.catalog['props'][name]
-                self.billboard(g,'props',prop['rect_top_left'],prop['pivot'],prop['world_frame_size_metres'],x,z,tint)
+                self.obstacle(g,entry,tint)
             else:
                 self.rock.dust(g,front=False)
                 self.rock.body(g)
@@ -251,7 +291,7 @@ class View:
         if g.ball_z<LENGTH+1.3:self.rock.inside_overlay(g)
         if g.hit_until>g.time:self.rect(0,72,w,h-72,(160,28,19,round(70*(g.hit_until-g.time)/.45)))
         self.rect(0,0,w,72,(12,17,18,245));self.rect(0,h-100,w,100,(12,17,18,235))
-        self.text('돌 추격 · 무적 연습',24,10,big=False)
+        self.text('돌 추격 · 무적 연습' if self.room_ready else '돌 추격 · 임시 사물',24,10,big=False)
         if g.state=='ready':status=f'{max(0,5-g.time):.1f}초 후 돌 출발 · 먼저 이동하세요'
         elif g.look_back:status='뒤를 보는 중 · 이동 방향은 그대로'
         elif g.ball_z>g.z+RADIUS+PLAYER_RADIUS:status='돌이 앞서갑니다 · 계속 이동해서 출구로 탈출'

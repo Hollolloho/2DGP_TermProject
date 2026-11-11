@@ -1,0 +1,86 @@
+{
+  "props": {
+    "fallen_column": {
+      "image": "obstacles.png",
+      "rect_top_left": [
+        0,
+        0,
+        1024,
+        512
+      ],
+      "pivot": [
+        512,
+        488
+      ],
+      "world_frame_size_metres": [
+        1.28,
+        0.64
+      ]
+    },
+    "rubble": {
+      "image": "obstacles.png",
+      "rect_top_left": [
+        1024,
+        0,
+        1024,
+        512
+      ],
+      "pivot": [
+        512,
+        488
+      ],
+      "world_frame_size_metres": [
+        1.164,
+        0.582
+      ]
+    }
+  },
+  "exits": {
+    "narrow": {
+      "image": "exits.png",
+      "rect_top_left": [
+        0,
+        0,
+        768,
+        1024
+      ],
+      "pivot": [
+        384,
+        1000
+      ],
+      "world_frame_size_metres": [
+        1.67,
+        2.23
+      ],
+      "opening_uv": [
+        0.3359375,
+        0.212890625,
+        0.6627604166666666,
+        0.9765625
+      ]
+    },
+    "wide": {
+      "image": "exits.png",
+      "rect_top_left": [
+        768,
+        0,
+        768,
+        1024
+      ],
+      "pivot": [
+        384,
+        1000
+      ],
+      "world_frame_size_metres": [
+        1.67,
+        2.23
+      ],
+      "opening_uv": [
+        0.1484375,
+        0.244140625,
+        0.8515625,
+        0.9765625
+      ]
+    }
+  }
+}

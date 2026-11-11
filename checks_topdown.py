@@ -22,6 +22,7 @@ def run():
                     assert not game.can_stand(x+dx+.5,y+dy+.5)
     game=Game()
     assert game.torch_cell in game.visible
+    assert game.visited=={game.spawn} and game.torch_cell not in game.visited
     assert any(game.grid[y][x] for x,y in game.visible), 'The nearest blocking walls must be visible themselves.'
     before=len(game.visible)
     assert game.guard_alert_until<=game.time
@@ -42,6 +43,7 @@ def run():
     game.trap_progress=1
     game.update(.01)
     assert game.state=='explore' and (game.player.x,game.player.y)==(game.trap_exit[0]+.5,game.trap_exit[1]+.5)
+    assert game.trap_exit in game.visited
     game.map_open=True
     position=game.player.x,game.player.y
     world=game.phase_time
@@ -64,6 +66,16 @@ def run():
     assert demo.player.hp==80
     demo.update(.01)
     assert demo.player.hp==80, 'Hit cooldown must prevent repeated damage every frame.'
+    fatal=Game()
+    fatal.player.x,fatal.player.y=fatal.trap_cell[0]+.5,fatal.trap_cell[1]+.5
+    fatal.interact()
+    fatal.player.hp=20
+    fatal.trap_progress=TRAP_PLANES[0]
+    fatal.trap_x=blade_position(fatal.time+.01,0)
+    fatal.update(.01)
+    assert fatal.state=='failed' and fatal.player.hp==0
+    fatal.update(.05,dy=-1)
+    assert fatal.state=='failed' and fatal.player.hp==0
     demo.trap_progress=1;demo.trap_velocity=0
     demo.update(.01)
     assert demo.trap_completed and demo.landing_until>demo.time
@@ -78,7 +90,7 @@ def run():
     demo.trap_x=.5
     c=project(demo,1.3,0,7)
     assert c[0]<b[0]
-    print('PASS: 32 mazes; collision, FSM, moving-phase exact return, map clock, A/B benefit, hit cooldown and perspective.')
+    print('PASS: 32 mazes; collision, FSM, moving-phase exact return, visited map, A/B benefit, fatal blade hits and perspective.')
 
 
 if __name__=='__main__': run()
