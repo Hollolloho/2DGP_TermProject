@@ -119,17 +119,17 @@ class Game:
         self.phase = run_number % 3
         self.phase_time = self.time = 0.0
         self.attack_time = 10.0
-        self.visible, self.visited = set(), set()
+        self.visible, self.observed, self.visited = set(), set(), set()
         self.map_open, self.reveal_all = False, False
         self.banner, self.banner_until = '횃불에 접근해 F를 눌러 보세요', 5.0
         self.trap_progress, self.trap_x, self.trap_cooldown = 0.0, 0.0, 0.0
         self.trap_return = None
         self.trap_velocity = self.trap_side_velocity = self.trap_stride = 0.0
         self.trap_hit_at = -10.0
-        self.machine = Machine(model=self, states=['explore', 'trap', 'clear'],
+        self.machine = Machine(model=self, states=['explore', 'trap', 'clear', 'failed'],
             initial='explore', auto_transitions=False,
             transitions=[['enter_room', 'explore', 'trap'], ['leave_room', 'trap', 'explore'],
-                         ['escape', 'explore', 'clear']])
+                         ['escape', 'explore', 'clear'], ['fail', 'trap', 'failed']])
         self.player_machine = Machine(model=self.player, states=['idle', 'walk', 'sprint', 'attack'],
             initial='idle', auto_transitions=False,
             transitions=[['rest', '*', 'idle'], ['walk_now', '*', 'walk'],
@@ -171,7 +171,8 @@ class Game:
                 if distance <= reach and cone and self.line_of_sight(x, y):
                     visible.add((x, y))
         self.visible = visible
-        self.visited |= visible
+        self.observed.update(visible)
+        self.visited.add((math.floor(player.x), math.floor(player.y)))
         if self.trap_cell in visible:
             self.trap_discovered = True
 
@@ -229,7 +230,7 @@ class Game:
         dt = min(.05, max(0, dt))
         self.time += dt
         self.attack_time += dt
-        if self.state == 'clear':
+        if self.state in ('clear', 'failed'):
             return
         self.phase_time += dt
         if self.phase_time >= 60:
@@ -261,6 +262,9 @@ class Game:
                 dx_metres=abs(self.trap_x-blade_x)*TRAP_LATERAL
                 if dz<.24 and dx_metres<BLADE_RADIUS+PLAYER_RADIUS and not self.trap_cooldown:
                     self.player.hp = max(0, self.player.hp-20)
+                    if self.player.hp == 0:
+                        self.fail()
+                        return
                     self.trap_progress = max(0,plane-.06)
                     self.trap_velocity = -.5
                     self.trap_cooldown = 1.0
@@ -268,10 +272,6 @@ class Game:
                     self.message('칼날 피격 · 좌우로 피해서 통과하세요')
             if self.trap_progress >= 1:
                 self.return_from_trap(completed=True)
-            if self.player.hp <= 0:
-                self.player.hp = 100
-                self.return_from_trap()
-                self.message('시제품: 쓰러져 입구로 복귀 · 체력 초기화')
             return
         if self.map_open:
             dx = dy = 0

@@ -204,7 +204,7 @@ class View:
         p.SDL_RenderSetClipRect(p.renderer,p.SDL_Rect(8,32,496,368))
         for y in range(ROWS):
             for x in range(COLS):
-                known = (x,y) in game.visited
+                known = (x,y) in game.observed
                 visible = (x,y) in game.visible
                 if not (game.reveal_all or known):
                     continue
@@ -318,21 +318,16 @@ class View:
     def map_overlay(self, game):
         self.rectangle(0,0,640,400,(5,10,14,244))
         self.text('방문 지도',40,37,size='title')
-        self.text('확인한 지형만 표시 · M / Esc 닫기 · 세계 시간은 계속 진행',40,64)
+        self.text('지나간 통로만 표시 · M / Esc 닫기 · 세계 시간은 계속 진행',40,64)
         step,ox,oy=11,145,100
         for x,y in game.visited:
-            self.rectangle(ox+x*step,oy+y*step,step-1,step-1,
-                           (51,61,61) if game.grid[y][x] else (145,143,119))
+            self.rectangle(ox+x*step,oy+y*step,step-1,step-1,(145,143,119))
         if game.trap_discovered:
             ax,ay=game.trap_cell
-            bx,by=game.trap_exit
-            length=math.hypot(bx-ax,by-ay)*step
-            for i in range(0,max(1,round(length)),7):
-                t=i/max(1,length)
-                self.rectangle(ox+(ax+.5+(bx-ax)*t)*step,oy+(ay+.5+(by-ay)*t)*step,2,2,(119,141,133))
             self.badge('A',ox+(ax+.5)*step,oy+(ay+.5)*step,(218,175,107))
-            self.badge('B',ox+(bx+.5)*step+8,oy+(by+.5)*step-8,(127,197,183))
-            self.text(f'A → B : 함정방 연결 · 일반 통로 {game.shortcut_distance}칸 우회',145,80,(195,184,147))
+        if game.trap_completed:
+            bx,by=game.trap_exit
+            self.badge('B',ox+(bx+.5)*step,oy+(by+.5)*step,(127,197,183))
         x,y=game.player.x,game.player.y
         self.rectangle(ox+x*step-2,oy+y*step-2,5,5,(231,214,156))
         self.text('노랑: 플레이어    A: 함정방 입구    B: 도착점',145,370)
@@ -354,6 +349,10 @@ class View:
             self.rectangle(0,0,LW,LH,(0,0,0,240))
             self.text('CLEAR',225,180,(226,213,171),size='big')
             self.text('중앙 탈출구에 도달했습니다 · R 새 회차',200,236,size='font')
+        elif game.state=='failed':
+            self.rectangle(0,0,LW,LH,(0,0,0,240))
+            self.text('실패',275,180,(218,126,109),size='big')
+            self.text('체력이 0이 됐습니다 · R 새 회차',230,236,size='font')
         if self.last_mode != game.state:
             self.last_mode,self.mode_changed=game.state,game.time
         fade=max(0,1-(game.time-self.mode_changed)/.28)
