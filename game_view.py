@@ -1,4 +1,4 @@
-"""Pixel top-down exploration and fixed-front 2D-perspective trap rendering."""
+"""Quarter-view exploration and fixed-front 2D-perspective trap rendering."""
 import ctypes
 import json
 import math
@@ -8,7 +8,13 @@ from maze_model import COLS, ROWS, PHASES, DIRECTIONS, TRAP_LENGTH
 from trap_view import Corridor
 
 LW, LH, SCALE = 640, 400, 2
-TILE, MAP_X, MAP_Y = 16, 8, 32
+MAP_RECT = (8, 32, 496, 368)
+HALF_TILE_W, HALF_TILE_H = 32, 16
+WALL_NEIGHBORS = ((0, -1, 1), (1, 0, 2), (0, 1, 4), (-1, 0, 8))
+
+
+def project(x, y):
+    return HALF_TILE_W*(x-y), HALF_TILE_H*(x+y)
 
 
 class View:
@@ -16,22 +22,20 @@ class View:
         self.root = Path(root)
         self.images, self.effects = {}, {}
         self.text_cache={}
-        self.atlases, self.pending_assets = {}, []
+        self.atlases = {}
         self.small = p.load_font('C:/Windows/Fonts/malgun.ttf', 10)
         self.font = p.load_font('C:/Windows/Fonts/malgun.ttf', 12)
         self.title = p.load_font('C:/Windows/Fonts/malgunbd.ttf', 17)
         self.big = p.load_font('C:/Windows/Fonts/malgunbd.ttf', 46)
         player = Path('sprite/quarter/player_explorer_v1')
         self.player_catalog = json.loads((self.root/player/'explorer.json').read_text(encoding='utf-8'))
+        directions = self.player_catalog['world_direction_to_screen']
+        self.facing = tuple(directions[name] for name in ('down', 'left', 'right', 'up'))
         self.images['player'] = self.load(player/self.player_catalog['image'], pixel=True)
-        for name, folder in (('props', 'props_v1'), ('guardian', 'guardian_v1'),
-                             ('shortcuts', 'shortcuts_v1')):
+        for name, folder in (('terrain', 'terrain_v1'), ('props', 'props_v1'),
+                             ('guardian', 'guardian_v1'), ('shortcuts', 'shortcuts_v1')):
             directory = Path('sprite/quarter')/folder
-            catalog = self.root/directory/'catalog.json'
-            if not catalog.is_file():
-                self.pending_assets.append(name)
-                continue
-            data = json.loads(catalog.read_text(encoding='utf-8'))
+            data = json.loads((self.root/directory/'catalog.json').read_text(encoding='utf-8'))
             self.images[name] = self.load(directory/data['image'], pixel=True)
             self.atlases[name] = data['frames']
         for name in ('torch', 'sword-slash'):
@@ -41,7 +45,9 @@ class View:
         self.logical = self.target(LW, LH)
         self.display = self.target(LW*SCALE, LH*SCALE)
         self.corridor = Corridor(self)
-        self.origin, self.world_scale = (MAP_X,MAP_Y), 1
+        self.origin, self.world_scale = (0, 0), 1
+        self.camera, self.camera_game = None, None
+        self.animated_player, self.animation_state, self.animation_started = None, None, 0
         self.last_mode, self.mode_changed = None, -10
 
     def load(self, path, pixel=False):
@@ -50,15 +56,13 @@ class View:
         p.SDL_SetTextureBlendMode(image.texture, p.SDL_BLENDMODE_BLEND)
         return image
 
-    def atlas(self, name, frame, x, y, scale=1, tint=(255, 255, 255)):
-        if name not in self.atlases:
-            return False
+    def atlas(self, x, y, name, frame, tint=(255, 255, 255)):
         item = self.atlases[name][frame]
         sx, sy, w, h = item['rect']
         px, py = item['pivot']
+        scale = self.world_scale
         self.image(name, (x-px*scale, y-py*scale, w*scale, h*scale),
                    (sx, sy, w, h), tint)
-        return True
 
     @staticmethod
     def target(w, h):
@@ -112,37 +116,78 @@ class View:
                 self.text_cache.pop(next(iter(self.text_cache)))
         image.draw(x+image.w/2,LH-y)
 
-    def tile(self, index, x, y, tint=(255, 255, 255), size=16, variant=0):
-        if index<24:
-            # ponytail: keep square material cells until the quarter-view coordinate change;
-            # placing diamond terrain on this grid would show gaps at solid boundaries.
-            self.image('raw_wall' if index<16 else 'raw_floor', (x,y,size,size), tint=tint)
-            if index<16:
-                self.rectangle(x,y+size-2,size,2,(6,10,11,180))
+    def player_frame(self, game):
+        player = game.player
+        clips = self.player_catalog['clips']
+        facing = self.facing[player.direction]
+        attack = clips['attack-'+facing]
+        attack_ms = game.attack_time*1000
+        if attack_ms < sum(attack['durations_ms']):
+            clip, elapsed_ms = attack, attack_ms
         else:
-            frame = {34:'fountain_full', 35:'fountain_empty', 36:'rope_exit'}[index]
-            if not self.atlas('props', frame, x+size/2, y+size/2, size/64, tint):
-                color = (90,170,186) if index==34 else (75,80,83) if index==35 else (222,197,126)
-                self.rectangle(x+size*.2,y+size*.2,size*.6,size*.6,color)
-                if index==36:
-                    self.line(x+size/2,y-size/2,x+size/2,y+size*.7,(230,211,167))
+            state = {'walk': 'walk', 'sprint': 'run'}.get(player.state, 'idle')
+            if player is not self.animated_player or state != self.animation_state:
+                self.animated_player, self.animation_state = player, state
+                self.animation_started = game.time
+            clip = clips[state+'-'+facing]
+            elapsed_ms = (game.time-self.animation_started)*1000
+        durations = clip['durations_ms']
+        if clip['loop']:
+            elapsed_ms %= sum(durations)
+        for frame, duration in zip(clip['frames'], durations):
+            if elapsed_ms < duration:
+                return frame['rect']
+            elapsed_ms -= duration
+        return clip['frames'][-1]['rect']
 
-    def actor(self, x, y, direction, step=0, guardian=False, tint=(255, 255, 255)):
-        scale=self.world_scale
-        if guardian:
-            facing=('sw','nw','se','ne')[direction]
-            if not self.atlas('guardian', 'idle_'+facing, x, y, scale*.5, tint):
-                self.rectangle(x-6*scale,y-16*scale,12*scale,16*scale,(123,130,125))
-                self.rectangle(x-4*scale,y-21*scale,8*scale,6*scale,(176,152,111))
-        else:
-            # ponytail: idle art only here; state/timing integration is the next task.
-            facing=('sw','nw','se','ne')[direction]
-            frame=self.player_catalog['clips']['idle-'+facing]['frames'][0]['rect']
-            px,py=self.player_catalog['pivot']
-            self.image('player',(x-px*scale*.5,y-py*scale*.5,32*scale,32*scale),tuple(frame),tint)
+    def player(self, x, y, game):
+        scale = self.world_scale
+        frame = self.player_frame(game)
+        px, py = self.player_catalog['pivot']
+        self.image('player', (x-px*scale, y-py*scale, frame[2]*scale, frame[3]*scale), frame)
+        if game.player.torch:
+            self.effect('torch', x-8*scale, y-23*scale, game.time, .22*scale)
+        if game.attack_time < .75:
+            dx, dy = project(*DIRECTIONS[game.player.direction])
+            angle = math.degrees(math.atan2(dy, dx))
+            self.effect('sword-slash', x+dx*.5*scale, y+(dy*.5-22)*scale,
+                        game.attack_time, .55*scale, angle)
+
+    def guardian(self, x, y, game, tint):
+        self.atlas(x, y, 'guardian', 'idle_'+self.facing[game.guard_direction], tint)
+        if game.time < game.guard_alert_until:
+            scale = self.world_scale
+            self.rectangle(x-12*scale, y-56*scale, 24*scale, 2*scale, (36,29,26))
+            self.rectangle(x-12*scale, y-56*scale, 8*game.guard_hp*scale, 2*scale, (155,75,59))
+
+    def prop(self, x, y, frame, tint, game):
+        self.atlas(x, y, 'props', frame, tint)
+        if frame == 'torch_stand' and not game.player.torch:
+            scale = self.world_scale
+            self.effect('torch', x, y-43*scale, game.time, .26*scale)
 
     def world(self, x, y):
-        return self.origin[0]+x*TILE*self.world_scale,self.origin[1]+y*TILE*self.world_scale
+        sx, sy = project(x, y)
+        return self.origin[0]+sx*self.world_scale, self.origin[1]+sy*self.world_scale
+
+    def position_camera(self, game):
+        left, top, width, height = MAP_RECT
+        center_x, center_y = left+width/2, top+height/2
+        if game.reveal_all:
+            self.world_scale = .25
+            mid_x, mid_y = project(COLS/2, ROWS/2)
+            # Center the full ground bounds with room for the walls above them.
+            self.origin = (round(center_x-mid_x*.25), round(center_y-(mid_y-32)*.25))
+            return
+        self.world_scale = 1
+        px, py = project(game.player.x, game.player.y)
+        if self.camera_game is not game or self.last_mode == 'trap':
+            self.camera_game = game
+            self.camera = (center_x-px, center_y-py)
+        cx, cy = self.camera
+        self.camera = (min(center_x+84-px, max(center_x-84-px, cx)),
+                       min(center_y+56-py, max(center_y-56-py, cy)))
+        self.origin = tuple(round(coordinate) for coordinate in self.camera)
 
     def badge(self, label, x, y, color):
         self.rectangle(x-5,y-6,11,12,(17,22,23,230))
@@ -151,23 +196,18 @@ class View:
 
     @staticmethod
     def shortcut_mount(game, cell):
-        # Anchor the threshold on the adjacent wall, preserving the floor/interaction cell.
-        for dx,dy,facing in ((0,-1,'south'),(-1,0,'east'),(1,0,'west'),(0,1,'north')):
+        # Prefer a rear wall so the opening faces the camera.
+        for dx,dy,facing in ((0,-1,'south'),(-1,0,'east')):
             if game.solid(cell[0]+dx,cell[1]+dy):
                 return cell[0]+.5+dx*.48,cell[1]+.5+dy*.48,facing
+        for dx,dy,facing in ((1,0,'west'),(0,1,'north')):
+            if game.solid(cell[0]+dx,cell[1]+dy):
+                return cell[0]+.5,cell[1]+.5,facing
         return cell[0]+.5,cell[1]+.5,'south'
 
-    def shortcut(self, game, cell, kind='trap', state='entry', arrival=False):
-        _, _, facing = self.shortcut_mount(game, cell)
-        frame = ('puzzle_' + ('open' if state == 'open' else 'closed') if kind == 'puzzle'
-                 else 'trap_' + ('arrival' if arrival else 'entry')) + '_' + facing
-        x, y = self.world(cell[0]+.5, cell[1]+.5)
-        scale = self.world_scale*.5
-        if not self.atlas('shortcuts', frame, x, y, scale):
-            size = TILE*self.world_scale
-            self.rectangle(x-size*.35,y-size*.45,size*.7,size*.8,(24,29,28))
-            color = (127,197,183) if arrival else (218,175,107)
-            self.rectangle(x-size*.35,y-size*.45,size*.7,2,color)
+    def shortcut(self, x, y, facing, arrival, tint):
+        frame = ('trap_arrival_' if arrival else 'trap_entry_')+facing
+        self.atlas(x, y, 'shortcuts', frame, tint)
 
     @staticmethod
     def tile_tint(game,x,y):
@@ -177,7 +217,7 @@ class View:
         if visible and game.player.torch:
             glow=max(0.,1.-math.hypot(x+.5-game.player.x,y+.5-game.player.y)/7.)
             phase_tint=tuple(min(1.,c+warm*glow) for c,warm in zip(phase_tint,(.30,.13,0.)))
-        return brightness,tuple(round(255*brightness*c) for c in phase_tint)
+        return tuple(round(255*brightness*c) for c in phase_tint)
 
     def effect(self, name, x, y, seconds, scale=1, angle=0):
         data = self.effects[name]
@@ -192,79 +232,60 @@ class View:
         self.image(name, (x-ox*scale, y-oy*scale, frame['w']*scale, frame['h']*scale),
                    (frame['x'], frame['y'], frame['w'], frame['h']), angle=angle)
 
-    def topdown(self, game):
+    def quarter(self, game):
         self.clear()
-        self.world_scale=1 if game.reveal_all else 2
-        if game.reveal_all:
-            self.origin=(MAP_X,MAP_Y)
-        else:
-            self.origin=(round(max(8-(COLS*32-496),min(8,256-game.player.x*32))),
-                         round(max(32-(ROWS*32-368),min(32,216-game.player.y*32))))
-        size=TILE*self.world_scale
-        p.SDL_RenderSetClipRect(p.renderer,p.SDL_Rect(8,32,496,368))
-        for y in range(ROWS):
-            for x in range(COLS):
-                known = (x,y) in game.observed
-                visible = (x,y) in game.visible
-                if not (game.reveal_all or known):
-                    continue
-                if game.grid[y][x]:
-                    mask = sum(bit for dx,dy,bit in ((0,-1,1),(1,0,2),(0,1,4),(-1,0,8)) if game.solid(x+dx,y+dy))
-                    index = mask
-                else:
-                    index = 16+((x*7+y*11+game.seed)%8)
-                brightness,tint=self.tile_tint(game,x,y)
-                sx,sy=self.world(x,y)
-                if sx+size<8 or sx>504 or sy+size<32 or sy>400:
-                    continue
-                self.tile(index,sx,sy,tint,size=size,variant=(x*3+y*5+game.seed)%4)
-                if not game.grid[y][x]:
-                    # Contact shadows stay within floor cells and do not change collision.
-                    alpha=round(90*brightness)
-                    if game.solid(x,y-1):
-                        for depth,weight in enumerate((1.,.72,.42,.2)):
-                            self.rectangle(sx,sy+depth*self.world_scale,size,self.world_scale,(8,12,14,round(alpha*weight)))
-                    if game.solid(x-1,y):
-                        self.rectangle(sx,sy,2*self.world_scale,size,(8,12,14,round(alpha*.45)))
-        for cell, index in [(game.exit,36),(game.fountain,35 if game.fountain_used else 34)]:
-            if cell in game.visible or game.reveal_all:
-                sx,sy=self.world(*cell)
-                self.tile(index,sx-2*self.world_scale,sy-2*self.world_scale,size=20*self.world_scale)
-        for cell,arrival in ((game.trap_cell,False),(game.trap_exit,True)):
-            if cell in game.visible or game.reveal_all:
-                self.shortcut(game,cell,state='arrival' if arrival else 'entry',arrival=arrival)
-                sx,sy=self.world(*cell)
-                self.badge('B' if arrival else 'A',sx+size+6,sy+size/2,(127,197,183) if arrival else (218,175,107))
-        if not game.player.torch and (game.torch_cell in game.visible or game.reveal_all):
-            x,y = game.torch_cell
-            sx,sy=self.world(x+.5,y+.8)
-            self.effect('torch',sx,sy,game.time,.23*self.world_scale)
-        x,y = self.world(game.player.x,game.player.y)
-        step = (int(game.time*8)%3) if game.player.state in ('walk','sprint') else 0
-        actors=[(game.player.y,False)]
+        self.position_camera(game)
+        left, top, width, height = MAP_RECT
+        p.SDL_RenderSetClipRect(p.renderer, p.SDL_Rect(*MAP_RECT))
+        scene = []
+        drawn_cells = {(x, y) for y in range(ROWS) for x in range(COLS)} if game.reveal_all else game.observed
+
+        def place(draw, x, y, *args):
+            scene.append((x+y, draw, (*self.world(x, y), *args)))
+
+        for x, y in drawn_cells:
+            sx, sy = self.world(x+.5, y+.5)
+            if not (left-32 <= sx <= left+width+32 and top-16 <= sy <= top+height+80):
+                continue
+            tint = self.tile_tint(game, x, y)
+            variant = (x*3+y*5+game.seed) % 4
+            self.atlas(sx, sy, 'terrain', f'floor_{variant}', tint)
+            if game.grid[y][x]:
+                # Close the exposed wall face at the edge of explored terrain.
+                mask = sum(bit for dx, dy, bit in WALL_NEIGHBORS
+                           if (x+dx, y+dy) in drawn_cells and game.grid[y+dy][x+dx])
+                place(self.atlas, x+.5, y+.5, 'terrain', f'wall_{mask}', tint)
+
+        for (x, y), frame in ((game.exit, 'rope_exit'), (game.torch_cell, 'torch_stand'),
+                              (game.fountain, 'fountain_empty' if game.fountain_used else 'fountain_full')):
+            if (x, y) in game.visible or game.reveal_all:
+                place(self.prop, x+.5, y+.5, frame, self.tile_tint(game, x, y), game)
+
+        markers = []
+        for cell, arrival in ((game.trap_cell, False), (game.trap_exit, True)):
+            if cell not in game.visible and not game.reveal_all:
+                continue
+            x, y, facing = self.shortcut_mount(game, cell)
+            place(self.shortcut, x, y, facing, arrival, self.tile_tint(game, *cell))
+            sx, sy = self.world(cell[0]+.5, cell[1]+.5)
+            color = (127,197,183) if arrival else (218,175,107)
+            markers.append(('B' if arrival else 'A', sx+18*self.world_scale, sy, color))
+            if arrival and game.time < game.landing_until:
+                pulse = math.sin(game.time*5)
+                radius = (12+3*pulse)*self.world_scale
+                self.rectangle(sx-radius, sy+6*self.world_scale, radius*2, 2,
+                               (*color, round(100+40*pulse)))
+
         if game.guard_hp and (game.guard in game.visible or game.reveal_all):
-            actors.append((game.guard[1]+.5,True))
-        for _,guardian in sorted(actors):
-            if guardian:
-                sx,sy=self.world(game.guard[0]+.5,game.guard[1]+.5)
-                self.actor(sx,sy,game.guard_direction,guardian=True)
-                if game.time<game.guard_alert_until:
-                    self.rectangle(sx-7*self.world_scale,sy-27*self.world_scale,14*self.world_scale,self.world_scale,(36,29,26))
-                    self.rectangle(sx-7*self.world_scale,sy-27*self.world_scale,14*self.world_scale*game.guard_hp/3,self.world_scale,(155,75,59))
-            else:
-                self.actor(x,y,game.player.direction,step)
-                if game.player.torch:
-                    self.effect('torch',x-5*self.world_scale,y-2*self.world_scale,game.time,.17*self.world_scale)
-        if game.attack_time < .75:
-            angle = (90,180,0,270)[game.player.direction]
-            dx,dy = DIRECTIONS[game.player.direction]
-            self.effect('sword-slash',x+dx*7*self.world_scale,y+dy*7*self.world_scale,game.attack_time,.42*self.world_scale,angle)
-        if game.time<game.landing_until:
-            bx,by=self.world(game.trap_exit[0]+.5,game.trap_exit[1]+.5)
-            radius=(12+math.sin(game.time*5)*3)*self.world_scale
-            color=(127,197,183,round(100+40*math.sin(game.time*5)))
-            self.rectangle(bx-radius,by+size*.4,radius*2,2,color)
-        p.SDL_RenderSetClipRect(p.renderer,None)
+            x, y = game.guard
+            place(self.guardian, x+.5, y+.5, game, self.tile_tint(game, x, y))
+        place(self.player, game.player.x, game.player.y, game)
+        # Sort all upright art together by its ground point, independent of sprite height.
+        for _, draw, params in sorted(scene, key=lambda item: item[0]):
+            draw(*params)
+        for marker in markers:
+            self.badge(*marker)
+        p.SDL_RenderSetClipRect(p.renderer, None)
 
     def trap(self, game):
         self.corridor.draw(game)
@@ -291,10 +312,9 @@ class View:
     def hud(self, game, fps=0):
         self.rectangle(0,0,640,30,(12,18,22))
         self.text('초보자를 위한 미로 탈출 안내서',10,14,size='font')
-        self.text('탑뷰 검사 · 쿼터뷰 미연결',365,14,(156,156,128))
         self.rectangle(512,30,128,370,(16,23,27))
         self.rectangle(512,30,1,370,(71,77,70))
-        self.text('함정방 · 1인칭' if game.state=='trap' else '미궁 탐색 · 탑뷰',523,49,size='font')
+        self.text('미궁 탐색 · 쿼터뷰',523,49,size='font')
         self.text(f'{PHASES[game.phase]}  {60-int(game.phase_time):02d}s',523,73,(217,190,131),size='font')
         self.text('현재는 조명만 전환',523,91,(129,139,137))
         for y,label,value,color in [(115,'HP',game.player.hp,(158,77,66)),(148,'ST',game.player.stamina,(113,143,106))]:
@@ -341,7 +361,7 @@ class View:
             self.clear((0,0,0,0))
         else:
             p.SDL_SetRenderTarget(p.renderer,self.logical)
-            self.topdown(game)
+            self.quarter(game)
         self.hud_trap(game) if game.state=='trap' else self.hud(game,fps)
         if game.map_open and game.state=='explore':
             self.map_overlay(game)

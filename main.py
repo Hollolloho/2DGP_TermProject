@@ -18,9 +18,10 @@ if args.smoke:
     os.environ['SDL_AUDIODRIVER'] = 'dummy'
 
 import pico2d.pico2d as p
-from maze_model import Game
+from maze_model import DIRECTIONS, TRAP_LENGTH, Game
 from game_view import View, LW, LH, SCALE
 from game_audio import Audio
+from trap_view import project as project_trap
 
 ROOT = Path(__file__).resolve().parent
 OUTPUT = ROOT/'output/topdown'
@@ -100,6 +101,16 @@ def inject_key(key, down=True):
 
 def smoke(app):
     g=app.game
+    player = g.player
+
+    def press(key, ticks=0):
+        inject_key(key)
+        app.handle_events()
+        for _ in range(ticks):
+            app.update(.025)
+        inject_key(key, down=False)
+        app.handle_events()
+
     def snapshot(name):
         # Draw once to start a mode transition, then capture after its fade.
         app.view.draw(g)
@@ -107,41 +118,79 @@ def smoke(app):
         app.view.draw(g)
         app.view.capture(OUTPUT/name)
 
+    if g.reveal_all:
+        press(p.SDLK_v)
     for _ in range(20):
         app.update(.025)
     snapshot('01-directional-view.png')
-    # F is routed through the same SDL event handler as the visible app.
-    inject_key(p.SDLK_f)
-    app.handle_events()
-    assert g.player.torch
-    for _ in range(12): app.update(.025)
-    inject_key(p.SDLK_v)
-    app.handle_events()
+    press(p.SDLK_f)
+    assert player.torch
+
+    wasd = (p.SDLK_s, p.SDLK_a, p.SDLK_d, p.SDLK_w)
+    arrows = (p.SDLK_DOWN, p.SDLK_LEFT, p.SDLK_RIGHT, p.SDLK_UP)
+    forward = player.direction
+    dx, dy = DIRECTIONS[forward]
+    start_screen = app.view.world(player.x, player.y)
+    press(wasd[forward], 16)
+    assert (player.x, player.y) == (g.torch_cell[0]+.5, g.torch_cell[1]+.5)
+    assert player.state == 'walk'
+    app.view.draw(g)
+    moved_screen = app.view.world(player.x, player.y)
+    assert moved_screen != start_screen
+    backward = DIRECTIONS.index((-dx, -dy))
+    press(arrows[backward], 4)
+    app.view.draw(g)
+    assert player.direction == backward
+    assert app.view.world(player.x, player.y) != moved_screen
+    catalog = app.view.player_catalog
+    direction = ('down', 'left', 'right', 'up')[backward]
+    facing = catalog['world_direction_to_screen'][direction]
+    walk_frames = catalog['clips']['walk-'+facing]['frames']
+    assert app.view.player_frame(g) in [frame['rect'] for frame in walk_frames]
+    app.view.capture(OUTPUT/'01b-quarter-moved.png')
+    press(wasd[forward], 4)
+
+    press(p.SDLK_v)
     assert g.reveal_all
-    snapshot('02-topdown-overview.png')
-    inject_key(p.SDLK_m)
-    app.handle_events()
-    app.update(.025)
+    snapshot('02-quarter-overview.png')
+    press(p.SDLK_m)
     assert g.map_open
     snapshot('03-visited-map.png')
-    inject_key(p.SDLK_m)
-    app.handle_events()
-    # Arrange entry proximity in this automated test; no teleport key is shipped.
-    g.player.x,g.player.y=g.trap_cell[0]+.5,g.trap_cell[1]+.5
-    before=g.player.x,g.player.y
-    inject_key(p.SDLK_f)
-    app.handle_events()
+    press(p.SDLK_m)
+    press(p.SDLK_v)
+    assert not g.map_open and not g.reveal_all
+
+    # Follow the real corridor from the torch to A using regular movement input.
+    for (x, y), (nx, ny) in zip(g.path[1:5], g.path[2:6]):
+        press(wasd[DIRECTIONS.index((nx-x, ny-y))], 16)
+    before = player.x, player.y
+    assert before == (g.trap_cell[0]+.5, g.trap_cell[1]+.5)
+    press(p.SDLK_f)
     assert g.state=='trap'
-    for _ in range(20): app.update(.025)
+    fixed_center = project_trap(g, 0, 0, TRAP_LENGTH)
+    press(p.SDLK_w, 20)
+    closer = project_trap(g, 0, 0, TRAP_LENGTH)
+    assert g.trap_progress > 0 and (player.x, player.y) == before
+    assert closer[0] == fixed_center[0] and closer[1] > fixed_center[1]
     snapshot('04-first-person-trap.png')
-    inject_key(p.SDLK_ESCAPE)
-    app.handle_events()
-    assert g.state=='explore' and (g.player.x,g.player.y)==before
+    press(p.SDLK_ESCAPE)
+    assert g.state=='explore' and (player.x, player.y) == before
+    snapshot('05-quarter-return-a.png')
+
+    press(p.SDLK_f)
+    assert g.state == 'trap'
+    app.view.draw(g)
+    press(p.SDLK_w, 300)
+    assert g.state == 'explore' and g.trap_completed and g.trap_exit in g.visited
+    assert (player.x, player.y) == (g.trap_exit[0]+.5, g.trap_exit[1]+.5)
+    snapshot('06-quarter-return-b.png')
     app.save_status()
     (OUTPUT/'render_checks.json').write_text(json.dumps({'native_renderer':'pico2d + SDL2',
-        'window_size':[LW*SCALE,LH*SCALE],'logical_topdown':[LW,LH],
+        'window_size':[LW*SCALE,LH*SCALE],'logical_quarter_view':[LW,LH],
         'sdl_F_torch':True,'sdl_V_overview':True,'sdl_M_map':True,
-        'sdl_F_trap':True,'sdl_Esc_exact_return':True},indent=2),encoding='utf-8')
+        'sdl_WASD_move':True,'sdl_arrow_facing_frame':True,
+        'sdl_F_trap':True,'sdl_W_fixed_first_person':True,
+        'sdl_Esc_exact_return':True,'sdl_W_shortcut_arrival':True},indent=2),encoding='utf-8')
 
 
 def main():
@@ -151,7 +200,7 @@ def main():
         p.renderer=p.SDL_CreateRenderer(p.window,-1,p.SDL_RENDERER_SOFTWARE)
     assert p.renderer
     p.print_fps=lambda: None
-    p.SDL_SetWindowTitle(p.window,'Maze · Top-down / First-person trap · pico2d'.encode())
+    p.SDL_SetWindowTitle(p.window,'Maze · Quarter-view / First-person trap · pico2d'.encode())
     if not args.smoke:
         # The launcher hides only the Python host; show the SDL game window explicitly.
         p.SDL_HideWindow(p.window)

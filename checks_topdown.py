@@ -1,9 +1,33 @@
 """Small model checks: python checks_topdown.py; no SDL window required."""
 import math
-from maze_model import Game, COLS, ROWS, distances, TRAP_LENGTH, TRAP_PLANES, TRAP_LATERAL, BLADE_RADIUS, PLAYER_RADIUS, blade_position
+from maze_model import Game, COLS, ROWS, DIRECTIONS, distances, TRAP_LENGTH, TRAP_PLANES, TRAP_LATERAL, BLADE_RADIUS, PLAYER_RADIUS, blade_position
+
+
+def check_visibility():
+    game = Game()
+    game.grid = [[0] * COLS for _ in range(ROWS)]
+    game.player.x = game.player.y = 10.5
+    game.grid[10][12] = 1
+    game.torch_cell = (10, 11)
+    game.update_visibility()
+    base = game.visible
+    for direction in range(len(DIRECTIONS)):
+        game.player.direction = direction
+        game.update_visibility()
+        assert game.visible == base, 'Turning in place must not change visibility.'
+
+    # Check cardinal and diagonal distances and the wall directly east of the player.
+    assert {(5, 10), (10, 5), (10, 15), (13, 14), (12, 10)} <= base
+    assert {(10, 16), (14, 14), (13, 10)}.isdisjoint(base)
+
+    game.interact()
+    assert game.player.torch and base < game.visible
+    assert {(10, 16), (10, 17), (14, 14)} <= game.visible
+    assert {(10, 18), (17, 11), (13, 10), (16, 10)}.isdisjoint(game.visible)
 
 
 def run():
+    check_visibility()
     for seed in range(32):
         game=Game(seed)
         reachable=distances(game.grid,game.exit)
@@ -90,7 +114,7 @@ def run():
     demo.trap_x=.5
     c=project(demo,1.3,0,7)
     assert c[0]<b[0]
-    print('PASS: 32 mazes; collision, FSM, moving-phase exact return, visited map, A/B benefit, fatal blade hits and perspective.')
+    print('PASS: circular visibility, wall occlusion, torch radius; 32 mazes; collision, FSM, moving-phase exact return, visited map, A/B benefit, fatal blade hits and perspective.')
 
 
 if __name__=='__main__': run()

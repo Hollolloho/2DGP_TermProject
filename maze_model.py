@@ -161,14 +161,12 @@ class Game:
 
     def update_visibility(self):
         player, visible = self.player, set()
-        fx, fy = DIRECTIONS[player.direction]
         reach = 7 if player.torch else 5.5
         for y in range(max(0, int(player.y-reach)), min(ROWS, math.ceil(player.y+reach))):
             for x in range(max(0, int(player.x-reach)), min(COLS, math.ceil(player.x+reach))):
                 dx, dy = x+.5-player.x, y+.5-player.y
                 distance = math.hypot(dx, dy)
-                cone = distance < 1.6 or player.torch or (dx*fx+dy*fy)/max(.01, distance) > .48
-                if distance <= reach and cone and self.line_of_sight(x, y):
+                if distance <= reach and self.line_of_sight(x, y):
                     visible.add((x, y))
         self.visible = visible
         self.observed.update(visible)
