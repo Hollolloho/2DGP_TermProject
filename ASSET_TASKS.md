@@ -1,6 +1,6 @@
 # 교체 에셋 제작 목록
 
-기준: PRD v0.14, 2026-11-11. 작업 브랜치: `feature/asset`.
+기준: PRD v0.15, 2026-11-11.
 
 일반 미로는 쿼터뷰, 함정방은 정면 고정 1인칭이다. 기존 탑뷰 그래픽과 구형 원근 시트를 복구하지 않고 새 플레이어의 페인팅 스타일·석재 재질에 맞춰 교체한다. 아래 파일명과 JSON 키는 게임 연결 규격이다.
 
@@ -10,9 +10,9 @@
 | --- | --- | --- | --- | --- |
 | 1 | 쿼터뷰 지형 | 바닥 4변형, 벽 연결형 16종 | `sprite/quarter/terrain_v1/terrain.png`, `catalog.json` | 시트 준비·규격 검사 통과. 화면 좌표 연결은 후속 |
 | 2 | 쿼터뷰 소품 | 샘물 사용 전/후, 횃불 받침, 중앙 로프 탈출구 | `sprite/quarter/props_v1/props.png`, `catalog.json` | 시트 준비·규격 검사 통과 |
-| 3 | 쿼터뷰 숏컷 | 퍼즐 문 닫힘/열림, 함정 입구/도착점, 각각 4방향 | `sprite/quarter/shortcuts_v1/shortcuts.png`, `catalog.json` | 제작 요청 |
-| 4 | 수호자 | 낡은 갑옷·방패·철퇴, 4방향 대기 | `sprite/quarter/guardian_v1/guardian.png`, `catalog.json` | 제작 요청 |
-| 5 | 1인칭 돌방 | 쓰러진 기둥·돌무더기, 좁은/넓은 측면 출구 | `sprite/traps/boulder_room_v2/obstacles.png`, `exits.png`, `catalog.json` | 제작 요청 |
+| 3 | 쿼터뷰 숏컷 | 퍼즐 문 닫힘/열림, 함정 입구/도착점, 각각 4방향 | `sprite/quarter/shortcuts_v1/shortcuts.png`, `catalog.json` | 시트 준비·규격 검사 통과 |
+| 4 | 수호자 | 낡은 갑옷·방패·철퇴, 4방향 대기 | `sprite/quarter/guardian_v1/guardian.png`, `catalog.json` | 시트 준비·규격 검사 통과 |
+| 5 | 1인칭 돌방 | 쓰러진 기둥·돌무더기, 좁은/넓은 측면 출구 | `sprite/traps/boulder_room_v2/obstacles.png`, `exits.png`, `catalog.json` | 시트 준비·규격 검사 통과 |
 
 수호자 걷기·공격·피격 애니메이션은 추적·전투 구현 단계에서 추가한다. 퍼즐 판·조각 UI, 회피 전용 동작, 엔딩 애니메이션도 후속 작업이며 이번 삭제 참조 교체의 선행 조건은 아니다.
 
