@@ -1,0 +1,53 @@
+{
+  "image": "props.png",
+  "frames": {
+    "fountain_full": {
+      "rect": [
+        0,
+        0,
+        64,
+        96
+      ],
+      "pivot": [
+        32,
+        80
+      ]
+    },
+    "fountain_empty": {
+      "rect": [
+        64,
+        0,
+        64,
+        96
+      ],
+      "pivot": [
+        32,
+        80
+      ]
+    },
+    "torch_stand": {
+      "rect": [
+        128,
+        0,
+        64,
+        96
+      ],
+      "pivot": [
+        32,
+        80
+      ]
+    },
+    "rope_exit": {
+      "rect": [
+        192,
+        0,
+        64,
+        96
+      ],
+      "pivot": [
+        32,
+        80
+      ]
+    }
+  }
+}
