@@ -19,14 +19,13 @@ def inject_key(key, down=True):
 
 def run(app):
     output = app.output
-    from math import hypot, isclose
+    from math import ceil, hypot, isclose
 
     g=app.game
     player = g.player
     step = .025
     w, a, s, d = p.SDLK_w, p.SDLK_a, p.SDLK_s, p.SDLK_d
     diagonals = ((s, a), (w, a), (s, d), (w, d))  # DIRECTIONS order
-    diagonal_facings = ('sw', 'nw', 'se', 'ne')
 
     def press(*keys, ticks=0, timesteps=None, track_camera=False):
         for key in keys:
@@ -42,11 +41,12 @@ def run(app):
 
     def walk_tile(*keys):
         seconds = hypot(*project(1, 0))/WALK_SPEED
-        ticks = int(seconds/step)
-        press(*keys, timesteps=[step]*ticks+[seconds-ticks*step])
+        # 한 칸이 틱의 정수배여도 마지막에 0초 갱신을 추가하지 않는다.
+        ticks = ceil(seconds/step)
+        press(*keys, timesteps=[seconds/ticks]*ticks)
 
     def check_controls():
-        room = Game(g.seed)
+        room = Game(g.seed, player_clips=app.view.player_catalog['clips'])
         room.grid = [[0] * len(row) for row in room.grid]
         actor = room.player
         actor.x, actor.y = 15.5, 11.5
@@ -68,8 +68,16 @@ def run(app):
             distance = hypot(*project(actor.x-grid_x, actor.y-grid_y))
             assert isclose(distance, (RUN_SPEED if running else WALK_SPEED)*step)
             assert actor.direction == direction
+            assert actor.screen_facing == {
+                (0, -1): 'n', (0, 1): 's', (-1, 0): 'w', (1, 0): 'e',
+                (-1, -1): 'nw', (1, -1): 'ne', (-1, 1): 'sw', (1, 1): 'se',
+            }[(sx, sy)]
             assert actor.state == ('sprint' if running else 'walk')
-            clip = clips[('run-' if running else 'walk-')+diagonal_facings[direction]]
+            state = 'run' if running else 'walk'
+            clip_name = room.locomotion_clip_name(state)
+            if sx and sy:
+                assert clip_name == f'{state}-{actor.screen_facing}'
+            clip = clips[clip_name]
             assert view.player_frame(room) in [frame['rect'] for frame in clip['frames']]
 
         try:
@@ -192,6 +200,50 @@ def run(app):
             walk_tile(s, d)
             assert isclose(actor.x, 16.5) and isclose(actor.y, 11.5)
             assert room.can_stand(actor.x, actor.y)
+
+            # 실제 입력으로 상하좌우 자세와 걷기 0.8초 주기를 검사한다.
+            room.grid = [[0]*len(row) for row in room.grid]
+            walk_schedules = {'20 FPS': [.05]*16}
+            walk_schedules.update({name: times[:round(len(times)*.8)] for name, times in schedules.items()})
+            cardinal = ((w, 'n', 'north', 0, -1), (s, 's', 'south', 0, 1),
+                        (a, 'w', 'west', -1, 0), (d, 'e', 'east', 1, 0))
+            for key, facing, label, sx, sy in cardinal:
+                walk_name, idle_name = f'walk-{facing}', f'idle-{facing}'
+                walk = clips[walk_name]
+                assert len(walk['frames']) == 16 and walk['durations_ms'] == [50]*16
+                offset = walk['phase_offset_frames']
+                for schedule, times in walk_schedules.items():
+                    reset()
+                    actor.gait_phase = actor.gait_distance = 0.
+                    inject_key(key)
+                    app.handle_events()
+                    elapsed = 0.
+                    seen = set()
+                    for tick, dt in enumerate(times, start=1):
+                        app.update(dt)
+                        elapsed += dt
+                        index = (int(elapsed/.05+1e-9)+offset) % 16
+                        assert room.locomotion_clip_name('walk') == walk_name
+                        frame = view.player_frame(room)
+                        assert frame == walk['frames'][index]['rect'], (walk_name, schedule, elapsed, index)
+                        seen.add(tuple(frame))
+                        if schedule == '20 FPS':
+                            view.draw(room)
+                            if tick % 4 == 0:
+                                view.capture(output/f'{label}-walk-{tick:02}.png')
+                    assert isclose(elapsed, .8) and len(seen) == 16
+                    assert actor.gait_phase == 0.
+                    assert isclose(actor.gait_distance, WALK_SPEED*.8, abs_tol=1e-8)
+                    dx, dy = project(actor.x-15.5, actor.y-11.5)
+                    assert isclose(dx, sx*WALK_SPEED*.8, abs_tol=1e-8)
+                    assert isclose(dy, sy*WALK_SPEED*.8, abs_tol=1e-8)
+                    inject_key(key, down=False)
+                    app.handle_events()
+                    press(ticks=1)
+                    assert room.locomotion_clip_name('idle') == idle_name
+                    assert view.player_frame(room) == clips[idle_name]['frames'][0]['rect']
+                print(f'PASS: {walk_name} 16 frames in 0.8s at 20/30/60/120 FPS and variable dt, projected speed and {idle_name} on release.')
+            print('PASS: W/S/A/D select all four cardinal idle poses on release.')
             print(f'PASS: 256 SDL speed cases (30/60/120 FPS + variable dt), max error {max_speed_error:.3g} px/s; straight wall stops, swept corners, narrow corridors and immediate release.')
         finally:
             app.game = g
@@ -206,7 +258,7 @@ def run(app):
 
     def check_phase_render():
         """실제 SDL 키로 전환·통과·함정 복귀·R을 확인하고 비교 프레임을 남긴다."""
-        room = Game(g.seed)
+        room = Game(g.seed, player_clips=app.view.player_catalog['clips'])
         app.game = room
         next_grid = room.maze_layouts.grids[1]
         opened = next((x, y) for y, row in enumerate(room.grid) for x, wall in enumerate(row)
@@ -330,6 +382,7 @@ def run(app):
                 fresh = app.game
                 assert fresh is not room and fresh.run_number == run+1
                 assert fresh.player.gait_distance == fresh.player.gait_phase == 0
+                assert fresh.player_clips is app.view.player_catalog['clips']
                 assert fresh.phase == fresh.layout_phase == (run+1) % 3
                 assert not fresh.shift_cells and fresh.layout_revision == 0 and not fresh.phase_warning
                 for _ in range(32):
@@ -342,7 +395,7 @@ def run(app):
                 app.view.draw(fresh)
                 assert app.view.light_game is fresh and set(app.view.discovery) == fresh.observed
             # 새로 닫힌 벽 뒤의 옛 시야·광원 캐시를 지우고, SDL 이동도 차단한다.
-            room = Game(g.seed)
+            room = Game(g.seed, player_clips=app.view.player_catalog['clips'])
             app.game = room
             next_grid = room.maze_layouts.grids[1]
             closed = next((x, y) for y, row in enumerate(room.grid) for x, wall in enumerate(row)
@@ -443,6 +496,9 @@ def run(app):
         'window_size':[LW*SCALE,LH*SCALE],'logical_quarter_view':[LW,LH],
         'sdl_F_torch':True,'sdl_V_overview':True,'sdl_M_map':True,
         'sdl_WASD_move':True,'sdl_WASD_diagonal_walk_run':True,
+        'sdl_east_walk_16_frames':True,'sdl_east_idle_on_release':True,
+        'sdl_north_walk_16_frames':True,'sdl_south_walk_16_frames':True,'sdl_west_walk_16_frames':True,
+        'sdl_cardinal_idle_on_release':True,
         'sdl_opposite_keys_cancel':True,'sdl_arrows_inactive':True,'sdl_straight_wall_stop':True,
         'sdl_equal_projected_speed':True,'sdl_30_60_120_variable_dt':True,'sdl_swept_corner_collision':True,
         'sdl_trap_WASD':True,

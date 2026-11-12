@@ -8,8 +8,8 @@ SCHEDULES = ([1/30]*30, [1/60]*60, [1/120]*120,
              [1/120, 1/40, 1/60, 1/20]*10)
 
 
-def room():
-    game = Game()
+def room(player_clips=None):
+    game = Game(player_clips=player_clips)
     game.grid = [[0]*COLS for _ in range(ROWS)]
     game.player.x, game.player.y = 15.5, 11.5
     return game
@@ -30,6 +30,7 @@ def finish_shift(game):
 
 
 def check_gait():
+    check_clip_metadata()
     for running, speed, cycle in ((False, WALK_SPEED, WALK_CYCLE_PX),
                                   (True, RUN_SPEED, RUN_CYCLE_PX)):
         for schedule in SCHEDULES:
@@ -58,6 +59,9 @@ def check_gait():
         for _ in range(20):
             game.update(.025, 1, 0, running)
         assert gait(player) == stopped and player.state == 'idle'
+        facing = player.screen_facing
+        game.update(.025, 1, -1, running)
+        assert player.screen_facing == facing and gait(player) == stopped
 
     game = room()
     player = game.player
@@ -86,6 +90,7 @@ def check_gait():
     game = Game()
     player = game.player
     player.gait_distance, player.gait_phase = 13.25, .3125
+    player.screen_facing = 'n'
     closed = next((x, y) for y, row in enumerate(game.grid) for x, wall in enumerate(row)
                   if not wall and game.maze_layouts.grids[1][y][x])
     player.x, player.y = closed[0]+.5, closed[1]+.5
@@ -94,6 +99,7 @@ def check_gait():
     game.update(.02, 1, 1, True)
     finish_shift(game)
     assert (player.x, player.y) != position and gait(player) == stopped
+    assert player.screen_facing == 'n'
     assert game.can_stand(player.x, player.y)
 
     # 함정방 이동, A 복귀, B 도착, 변형 강제 복귀 모두 쿼터뷰 보행과 분리된다.
@@ -110,8 +116,103 @@ def check_gait():
         else:
             game.return_from_trap(completed=outcome == 'complete')
         assert game.state == 'explore' and gait(player) == stopped
+        assert player.screen_facing == 'n'
     assert gait(Game().player) == (0., 0.)
     print('PASS: distance gait across 8 directions and 30/60/120/variable dt; partial/full collision, release, map, state changes, relocation and trap teleports.')
+
+
+def check_clip_metadata():
+    """이미지를 만들지 않고 메모리 토큰으로 16프레임 선택·메타 연결을 검사한다."""
+    import json
+    from pathlib import Path
+    from game_view import View
+    from maze_model import DIAGONAL_FACINGS
+
+    catalog = json.loads((Path(__file__).parent/'sprite/quarter/player_explorer_v1/explorer.json').read_text(encoding='utf-8'))
+    # 최종 에셋 교체 후에도 '정면 클립·보행 메타 없음' 호환 검사를 유지한다.
+    legacy = {name: {key: value for key, value in clip.items()
+                     if key not in ('cycle_distance_px', 'phase_offset_frames')}
+              for name, clip in catalog['clips'].items() if name.rsplit('-', 1)[-1] in DIAGONAL_FACINGS}
+    clips = dict(legacy)
+    commands = ((-1, -1, 'n'), (1, 1, 's'), (1, -1, 'e'), (-1, 1, 'w'),
+                (-1, 0, 'nw'), (0, -1, 'ne'), (0, 1, 'sw'), (1, 0, 'se'))
+    for index, (_, _, facing) in enumerate(commands):
+        for state in ('walk', 'run', 'idle'):
+            clips[state+'-'+facing] = {
+                'frames': [{'rect': object()} for _ in range(16)],
+                'durations_ms': [100]*16, 'loop': True,
+                'cycle_distance_px': (53 if state == 'walk' else 87)+index*3,
+                'phase_offset_frames': 0 if facing == 'nw' else (3 if state == 'walk' else -2),
+            }
+    # player_frame은 SDL 리소스를 사용하지 않아 플레이 창 없이 실제 선택 함수를 검사한다.
+    view = View.__new__(View)
+    view.player_catalog, view.facing = {'clips': clips}, DIAGONAL_FACINGS
+    view.animated_player, view.animation_state, view.animation_started = None, None, 0.
+    for running in (False, True):
+        state = 'run' if running else 'walk'
+        speed = RUN_SPEED if running else WALK_SPEED
+        for schedule in SCHEDULES:
+            for dx, dy, facing in commands:
+                game = room(clips)
+                player = game.player
+                player.gait_phase = .25
+                for dt in schedule:
+                    game.update(dt, dx, dy, running)
+                clip = clips[state+'-'+facing]
+                assert player.screen_facing == facing
+                assert_phase(player.gait_phase, .25+speed*sum(schedule)/clip['cycle_distance_px'])
+                index = (int(player.gait_phase*16+1e-9)+clip['phase_offset_frames']) % 16
+                for _ in range(3):
+                    assert view.player_frame(game) is clip['frames'][index]['rect']
+                stopped = gait(player)
+                game.update(.01)
+                assert player.screen_facing == facing and gait(player) == stopped
+                assert view.player_frame(game) is clips['idle-'+facing]['frames'][0]['rect']
+                # 공격은 새 정면 idle 방향과 무관하게 원래 4방향을 사용한다.
+                game.attack()
+                attack = legacy['attack-'+DIAGONAL_FACINGS[player.direction]]
+                assert view.player_frame(game) == attack['frames'][0]['rect']
+
+    game = room(clips)
+    player = game.player
+    # 같은 접지 위상은 방향·상태를 바꿔도 유지하며, 각 클립 오프셋만 적용한다.
+    for running in (False, True):
+        player.sprint_now() if running else player.walk_now()
+        state = 'run' if running else 'walk'
+        for _, _, facing in commands:
+            player.screen_facing = facing
+            clip = clips[state+'-'+facing]
+            for index in range(16):
+                player.gait_phase = (index+.25)/16
+                assert view.player_frame(game) is clip['frames'][(index+clip['phase_offset_frames']) % 16]['rect']
+                assert player.gait_phase == (index+.25)/16
+    expected = player.gait_phase
+    for dx, dy, facing, running in ((1, 1, 's', False), (1, 1, 's', True), (-1, 0, 'nw', True)):
+        clip = clips[('run' if running else 'walk')+'-'+facing]
+        game.update(.025, dx, dy, running)
+        expected += .025*(RUN_SPEED if running else WALK_SPEED)/clip['cycle_distance_px']
+        assert_phase(player.gait_phase, expected)
+
+    # 없는 정면 클립은 원래 호환 대각선과 그 보폭·오프셋을 함께 사용한다.
+    view.player_catalog = {'clips': legacy}
+    for running in (False, True):
+        game = room(legacy)
+        game.update(.025, -1, -1, running)
+        player = game.player
+        assert player.screen_facing == 'n'
+        state = 'run' if running else 'walk'
+        name = game.locomotion_clip_name(state)
+        assert name == state+'-nw'
+        clip = legacy[name]
+        cycle = RUN_CYCLE_PX if running else WALK_CYCLE_PX
+        assert_phase(player.gait_phase, player.gait_distance/cycle)
+        offset = 0 if running else 1
+        index = (int(player.gait_phase*len(clip['frames']))+offset) % len(clip['frames'])
+        assert view.player_frame(game) == clip['frames'][index]['rect']
+        game.update(.01)
+        assert game.locomotion_clip_name('idle') == 'idle-nw'
+        assert view.player_frame(game) == legacy['idle-nw']['frames'][0]['rect']
+    print('PASS: metadata stride/offset, all 16 frame indices, 8 actual movement/idle facings, legacy fallback and unchanged 4-way attacks; no image fixtures.')
 
 
 def check_gait_view(view):
@@ -120,7 +221,7 @@ def check_gait_view(view):
         reference = None
         for schedule in SCHEDULES:
             for draws in (0, 1, 2):
-                game = room()
+                game = room(view.player_catalog['clips'])
                 player = game.player
                 player.gait_phase = .125
                 for dt in schedule:
@@ -134,7 +235,7 @@ def check_gait_view(view):
                 assert_phase(result[1], reference[1])
                 assert result[2] == reference[2]
 
-    game = room()
+    game = room(view.player_catalog['clips'])
     player = game.player
     game.update(.05, 0, 1)
     saved = gait(player)
@@ -143,8 +244,9 @@ def check_gait_view(view):
         state = 'run' if running else 'walk'
         for direction, facing in enumerate(view.facing):
             player.direction = direction
+            player.screen_facing = facing
             clip = view.player_catalog['clips'][state+'-'+facing]
-            offset = int(state == 'walk' and facing == 'nw')
+            offset = clip.get('phase_offset_frames', int(state == 'walk' and facing == 'nw'))
             index = (int(saved[1]*len(clip['frames']))+offset) % len(clip['frames'])
             assert view.player_frame(game) == clip['frames'][index]['rect']
             game.reveal_all = not game.reveal_all
@@ -156,7 +258,7 @@ def check_gait_view(view):
     game.update(.025)
     assert player.state == 'idle'
     initial = view.player_frame(game)
-    idle = view.player_catalog['clips']['idle-'+view.facing[player.direction]]
+    idle = view.player_catalog['clips'][game.locomotion_clip_name('idle')]
     for _ in range(math.ceil(idle['durations_ms'][0]/50)+1):
         game.update(.05)
     assert view.player_frame(game) != initial and gait(player) == saved

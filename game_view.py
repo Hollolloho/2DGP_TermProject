@@ -138,11 +138,12 @@ class View:
             if player is not self.animated_player or state != self.animation_state:
                 self.animated_player, self.animation_state = player, state
                 self.animation_started = game.time
-            clip = clips[state+'-'+facing]
+            name = game.locomotion_clip_name(state)
+            clip = clips[name]
             if state in ('walk', 'run'):
                 # 거리 위상만 읽는다. 렌더 횟수·시간·카메라·확대는 보행을 진행시키지 않는다.
-                # NW 걷기는 지지 시작 후보가 1/5번이라 다른 클립의 0/4번에 맞춘다.
-                offset = 1 if state == 'walk' and facing == 'nw' else 0
+                # 공통 접지 위상 0에 맞는 프레임 오프셋을 더한다. 구 NW 걷기만 기본 1이다.
+                offset = clip.get('phase_offset_frames', 1 if name == 'walk-nw' else 0)
                 index = int(player.gait_phase*len(clip['frames'])+1e-9)
                 return clip['frames'][(index+offset) % len(clip['frames'])]['rect']
             elapsed_ms = (game.time-self.animation_started)*1000

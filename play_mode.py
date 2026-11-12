@@ -11,7 +11,8 @@ class PlayMode:
         self.seed, self.smoke = args.seed, args.smoke
         self.output = project / "output/topdown"
         self.output.mkdir(parents=True, exist_ok=True)
-        self.game = Game(args.seed)
+        self.view = View(project)
+        self.game = Game(args.seed, player_clips=self.view.player_catalog['clips'])
         self.game.reveal_all = args.overview
         if args.trap_preview:
             self.game.player.x,self.game.player.y=self.game.trap_cell[0]+.5,self.game.trap_cell[1]+.5
@@ -19,7 +20,6 @@ class PlayMode:
             self.game.interact()
         self.held = set()
         self.running = True
-        self.view = View(project)
         self.audio = Audio(project)
 
     def handle_events(self):
@@ -49,7 +49,7 @@ class PlayMode:
                 elif event.key == p.SDLK_v and self.game.state == 'explore':
                     self.game.reveal_all = not self.game.reveal_all
                 elif event.key == p.SDLK_r:
-                    self.game = Game(self.seed, self.game.run_number+1)
+                    self.game = Game(self.seed, self.game.run_number+1, self.view.player_catalog['clips'])
                     self.held.clear()
                 elif event.key == p.SDLK_F10:
                     self.view.capture(self.output/'manual.png')
