@@ -25,18 +25,6 @@
         80
       ]
     },
-    "torch_stand": {
-      "rect": [
-        128,
-        0,
-        64,
-        96
-      ],
-      "pivot": [
-        32,
-        80
-      ]
-    },
     "rope_exit": {
       "rect": [
         192,
@@ -47,6 +35,62 @@
       "pivot": [
         32,
         80
+      ]
+    },
+    "torch_wall_left_full": {
+      "rect": [
+        128,
+        0,
+        32,
+        48
+      ],
+      "pivot": [
+        19,
+        31
+      ],
+      "wick_anchor": [
+        12,
+        14
+      ]
+    },
+    "torch_wall_right_full": {
+      "rect": [
+        160,
+        0,
+        32,
+        48
+      ],
+      "pivot": [
+        13,
+        31
+      ],
+      "wick_anchor": [
+        20,
+        14
+      ]
+    },
+    "torch_wall_left_empty": {
+      "rect": [
+        128,
+        48,
+        32,
+        48
+      ],
+      "pivot": [
+        19,
+        31
+      ]
+    },
+    "torch_wall_right_empty": {
+      "rect": [
+        160,
+        48,
+        32,
+        48
+      ],
+      "pivot": [
+        13,
+        31
       ]
     }
   }

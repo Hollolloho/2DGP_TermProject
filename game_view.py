@@ -4,7 +4,7 @@ import json
 import math
 from pathlib import Path
 import pico2d.pico2d as p
-from maze_model import BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS, COLS, ROWS, PHASES, DIRECTIONS, TRAP_LENGTH
+from maze_model import BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS, COLS, ROWS, PHASES, TRAP_LENGTH
 from maze_model import PHASE_SECONDS, SHIFT_SECONDS, SHIFT_SWAP_AT
 from maze_model import HALF_TILE_W, HALF_TILE_H, project
 from trap_view import Corridor
@@ -14,6 +14,7 @@ MAP_RECT = (8, 32, 496, 368)
 WALL_NEIGHBORS = ((0, -1, 1), (1, 0, 2), (0, 1, 4), (-1, 0, 8))
 MEMORY_LIGHT = .32
 LIGHT_FADE_SECONDS = .20
+TORCH_MOUNT_HEIGHT = 24
 
 
 class View:
@@ -37,10 +38,12 @@ class View:
             data = json.loads((self.root/directory/'catalog.json').read_text(encoding='utf-8'))
             self.images[name] = self.load(directory/data['image'], pixel=True)
             self.atlases[name] = data['frames']
-        for name in ('torch', 'sword-slash'):
-            data = json.loads((self.root/f'sprite/topdown/effects/{name}.json').read_text())
-            self.images[name] = self.load(f'sprite/topdown/effects/{name}.png', pixel=True)
-            self.effects[name] = data
+        torch = Path('sprite/topdown/effects/torch')
+        self.effects['torch'] = json.loads((self.root/torch.with_suffix('.json')).read_text())
+        self.images['torch'] = self.load(torch.with_suffix('.png'), pixel=True)
+        dagger_dir = Path('sprite/quarter/effects')
+        self.dagger_fx = json.loads((self.root/dagger_dir/'dagger-slash.json').read_text(encoding='utf-8'))
+        self.images['dagger-slash'] = self.load(dagger_dir/self.dagger_fx['image'], pixel=True)
         self.logical = self.target(LW, LH)
         self.display = self.target(LW*SCALE, LH*SCALE)
         self.corridor = Corridor(self)
@@ -128,10 +131,9 @@ class View:
     def player_frame(self, game):
         player = game.player
         clips = self.player_catalog['clips']
-        facing = self.facing[player.direction]
-        attack = clips['attack-'+facing]
+        attack = clips.get(game.attack_clip)
         attack_ms = game.attack_time*1000
-        if attack_ms < sum(attack['durations_ms']):
+        if attack is not None and attack_ms < sum(attack['durations_ms']):
             clip, elapsed_ms = attack, attack_ms
         else:
             state = {'walk': 'walk', 'sprint': 'run'}.get(player.state, 'idle')
@@ -156,18 +158,35 @@ class View:
             elapsed_ms -= duration
         return clip['frames'][-1]['rect']
 
+    def dagger_frame(self, game, x, y):
+        fx = self.dagger_fx
+        if game.attack_clip is None:
+            return None
+        elapsed_ms = game.attack_time*1000 - fx['start_ms']
+        if not 0 <= elapsed_ms < fx['duration_ms']:
+            return None
+        clip = fx['clips'][game.attack_facing]
+        index = int(elapsed_ms*fx['fps']/1000)
+        rect = clip['frames'][index]['rect']
+        scale = self.world_scale
+        ax, ay = fx['anchor_px']
+        px, py = self.player_catalog['pivot']
+        fx_x, fx_y = fx['pivot']
+        dst = (x+(ax-px-fx_x)*scale, y+(ay-py-fx_y)*scale, rect[2]*scale, rect[3]*scale)
+        return clip['draw_layer'], dst, rect
+
     def player(self, x, y, game):
         scale = self.world_scale
         frame = self.player_frame(game)
         px, py = self.player_catalog['pivot']
+        dagger = self.dagger_frame(game, x, y)
+        if dagger and dagger[0] == 'back':
+            self.image('dagger-slash', dagger[1], dagger[2])
         self.image('player', (x-px*scale, y-py*scale, frame[2]*scale, frame[3]*scale), frame)
         if game.player.torch:
             self.effect('torch', x-8*scale, y-23*scale, game.time, .22*scale)
-        if game.attack_time < .75:
-            dx, dy = project(*DIRECTIONS[game.player.direction])
-            angle = math.degrees(math.atan2(dy, dx))
-            self.effect('sword-slash', x+dx*.5*scale, y+(dy*.5-22)*scale,
-                        game.attack_time, .55*scale, angle)
+        if dagger and dagger[0] == 'front':
+            self.image('dagger-slash', dagger[1], dagger[2])
 
     def guardian(self, x, y, game, tint):
         self.atlas(x, y, 'guardian', 'idle_'+self.facing[game.guard_direction], tint)
@@ -177,10 +196,14 @@ class View:
             self.rectangle(x-12*scale, y-56*scale, 8*game.guard_hp*scale, 2*scale, (155,75,59))
 
     def prop(self, x, y, frame, tint, game):
+        scale = self.world_scale
+        if frame.startswith('torch_wall_'):
+            y -= TORCH_MOUNT_HEIGHT*scale
         self.atlas(x, y, 'props', frame, tint)
-        if frame == 'torch_stand' and not game.player.torch:
-            scale = self.world_scale
-            self.effect('torch', x, y-43*scale, game.time, .26*scale)
+        wick = self.atlases['props'][frame].get('wick_anchor')
+        if wick is not None and not game.player.torch:
+            px, py = self.atlases['props'][frame]['pivot']
+            self.effect('torch', x+(wick[0]-px)*scale, y+(wick[1]-py)*scale, game.time, .26*scale)
 
     def world(self, x, y):
         sx, sy = project(x, y)
@@ -331,10 +354,18 @@ class View:
                 mask = self.wall_mask(game, x, y)
                 place(self.shifting_wall, x+.5, y+.5, f'wall_{mask}', tint, brightness, (x, y), game)
 
-        for (x, y), frame in ((game.exit, 'rope_exit'), (game.torch_cell, 'torch_stand'),
+        for (x, y), frame in ((game.exit, 'rope_exit'),
                               (game.fountain, 'fountain_empty' if game.fountain_used else 'fountain_full')):
             if (x, y) in game.visible or game.reveal_all:
                 place(self.prop, x+.5, y+.5, frame, self.tile_tint(game, x, y), game)
+
+        x, y = game.torch_cell
+        if game.torch_wall is not None and ((x, y) in game.visible or game.reveal_all):
+            # 에셋 방향은 통로에서 본 벽 위치가 아니라 벽의 노출 면 기준이다.
+            side = 'right' if game.torch_wall[0] < x else 'left'
+            state = 'empty' if game.player.torch else 'full'
+            place(self.prop, *game.torch_wall_contact, f'torch_wall_{side}_{state}',
+                  self.tile_tint(game, x, y), game)
 
         markers = []
         for cell, arrival in ((game.trap_cell, False), (game.trap_exit, True)):
