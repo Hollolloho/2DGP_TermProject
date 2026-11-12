@@ -1,7 +1,9 @@
 """Small model checks: python checks_topdown.py; no SDL window required."""
+import json
 import math
+from pathlib import Path
 from checks_phase_changes import check_phase_changes, finish_shift
-from checks_gait import check_gait
+from checks_gait import SCHEDULES, check_gait
 from maze_model import WALK_SPEED, project as project_ground
 from maze_model import Game, COLS, ROWS, DIRECTIONS, distances, TRAP_LENGTH, TRAP_PLANES, TRAP_LATERAL, BLADE_RADIUS, PLAYER_RADIUS, blade_position
 
@@ -29,10 +31,72 @@ def check_visibility():
     assert {(10, 18), (17, 11), (13, 10), (16, 10)}.isdisjoint(game.visible)
 
 
+def check_dagger():
+    catalog = Path(__file__).parent/'sprite/quarter/player_explorer_v1/explorer.json'
+    clips = json.loads(catalog.read_text(encoding='utf-8'))['clips']
+    game = Game(player_clips=clips)
+    game.grid = [[0]*COLS for _ in range(ROWS)]
+    player = game.player
+    directions = (('n', -1, -1), ('s', 1, 1), ('w', -1, 1), ('e', 1, -1),
+                  ('nw', -1, 0), ('ne', 0, -1), ('sw', 0, 1), ('se', 1, 0))
+
+    def begin(facing, target):
+        player.x, player.y = 15.5, 11.5
+        player.screen_facing = facing
+        game.guard, game.guard_hp = target, 3
+        game.phase_time, game.attack_time = 0., 10.
+        game.attack()
+        assert game.attack_facing == facing and game.attack_clip == 'attack-'+facing
+        assert game.guard_hp == 3
+        return next(event['at_ms']/1000 for event in clips[game.attack_clip]['events'] if event['name'] == 'hit')
+
+    for facing, dx, dy in directions:
+        for sign in (1, -1):
+            for times in SCHEDULES:
+                hit_at = begin(facing, (15+sign*dx, 11+sign*dy))
+                for dt in times:
+                    game.update(dt)
+                    expected = 2 if sign == 1 and game.attack_time >= hit_at else 3
+                    assert game.guard_hp == expected, (facing, sign, game.attack_time)
+
+    # 이동 방향을 바꿔도 공격은 시작 방향으로 한 번만 맞는다.
+    begin('sw', (15, 12))
+    game.update(.025, 0, -1)
+    assert player.screen_facing == 'ne' and game.attack_facing == 'sw'
+    for _ in range(10):
+        game.update(.025)
+    assert game.guard_hp == 2 and game.guard_alert_until > game.time
+
+    # 1.8칸 안에 있어도 벽 뒤나 정확히 옆에 있는 대상은 맞지 않는다.
+    game.grid[11][16] = 1
+    begin('e', (17, 11))
+    player.x = 15.75
+    assert game.can_stand(player.x, player.y)
+    assert math.hypot(game.guard[0]+.5-player.x, game.guard[1]+.5-player.y) < 1.8
+    for _ in range(10):
+        game.update(.025)
+    assert game.guard_hp == 3
+    game.grid[11][16] = 0
+    begin('n', (16, 10))
+    for _ in range(10):
+        game.update(.025)
+    assert game.guard_hp == 3
+
+    begin('sw', (15, 12))
+    game.map_open = True
+    for _ in range(10):
+        game.update(.025)
+    game.map_open = False
+    game.update(.05)
+    assert game.guard_hp == 3
+    print('PASS: 8-way dagger front/rear, catalog hit event at 30/60/120/variable dt, direction lock, wall and map.')
+
+
 def run():
     check_gait()
     check_phase_changes()
     check_visibility()
+    check_dagger()
     for seed in range(32):
         game=Game(seed)
         reachable=distances(game.grid,game.exit)
@@ -55,10 +119,6 @@ def run():
     assert any(game.grid[y][x] for x,y in game.visible), 'The nearest blocking walls must be visible themselves.'
     before=len(game.visible)
     assert game.guard_alert_until<=game.time
-    combat=Game()
-    combat.player.x,combat.player.y=combat.guard[0]+.5,combat.guard[1]+.5
-    combat.attack()
-    assert combat.guard_hp==2 and combat.guard_alert_until>combat.time
     game.interact()
     assert game.player.torch and len(game.visible)>=before
     game.player.x,game.player.y=game.trap_cell[0]+.5,game.trap_cell[1]+.5
@@ -69,7 +129,7 @@ def run():
     game.update(.02,1,-1)
     assert game.state=='shifting' and (game.player.x,game.player.y)==saved
     finish_shift(game)
-    assert game.state=='explore' and (game.player.x,game.player.y)==saved
+    assert game.state=='explore' and (game.player.x,game.player.y)==saved and game.player.torch
     game.interact()
     game.trap_progress=1
     game.update(.01)
