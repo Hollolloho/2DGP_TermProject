@@ -89,6 +89,17 @@ def shortest_path(grid, start, goal):
     return path
 
 
+def choose_torch_mount(grid, path, reserved):
+    """초반 진행 경로에서 보이는 벽을 우선하고, 없으면 가까운 통로를 찾는다."""
+    for x, y in [*path[1:4], *distances(grid, path[0])]:
+        if (x, y) in reserved:
+            continue
+        for wx, wy in ((x, y-1), (x-1, y)):
+            if wx >= 0 and wy >= 0 and grid[wy][wx]:
+                return (x, y), (wx, wy)
+    return path[1], None
+
+
 class MazeLayouts:
     """한 판에서 반복해서 사용할 낮·밤·새벽 지형을 준비한다.
 
@@ -227,8 +238,13 @@ class Game:
                       (cell[0] in (1, COLS-2) or cell[1] in (1, ROWS-2))]
         self.spawn = random.Random(seed+run_number*31).choice(candidates)
         path = shortest_path(self.grid, self.spawn, self.exit)
-        self.torch_cell, self.trap_cell = path[1], path[5]
+        self.trap_cell = path[5]
         self.trap_exit, self.fountain = path[min(24,len(path)-12)], path[15]
+        reserved = {self.spawn, self.trap_cell, self.trap_exit, self.fountain, self.exit}
+        # 획득은 통로에서, 그림은 벽과 통로의 경계에서 처리한다.
+        self.torch_cell, self.torch_wall = choose_torch_mount(self.grid, path, reserved)
+        self.torch_wall_contact = (tuple((floor+wall+1)/2 for floor, wall in zip(self.torch_cell, self.torch_wall))
+                                   if self.torch_wall is not None else None)
         self.trap_discovered, self.trap_completed = False, False
         self.landing_until = 0.0
         protected=(self.spawn,self.torch_cell,self.trap_cell,self.trap_exit,self.fountain,self.exit)

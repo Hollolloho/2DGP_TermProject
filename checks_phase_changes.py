@@ -35,6 +35,12 @@ def check_phase_changes():
                 changes = {(x, y) for y in range(ROWS) for x in range(COLS) if grid[y][x] != base[y][x]}
                 assert len(changes) == (0 if phase == 0 else 6)
                 assert not changes & layouts.protected_cells
+                tx, ty = game.torch_cell
+                wx, wy = game.torch_wall
+                assert (wx-tx, wy-ty) in ((-1, 0), (0, -1))
+                assert grid[ty][tx] == 0 and grid[wy][wx] == 1
+                assert (tx, ty) in distances(grid, game.spawn)
+                assert game.torch_wall_contact == ((tx+wx+1)/2, (ty+wy+1)/2)
 
             # 모든 시작 시간대에서 한 바퀴 돈다. 이전 시간대 기록으로 새 지형을 공개하지 않는다.
             game.player.hp, game.player.stamina = 61, 37.

@@ -53,6 +53,8 @@ def run():
     assert game.torch_cell in game.visible
     assert game.visited=={game.spawn} and game.torch_cell not in game.visited
     assert any(game.grid[y][x] for x,y in game.visible), 'The nearest blocking walls must be visible themselves.'
+    game.player.x, game.player.y = (value+.5 for value in game.torch_cell)
+    game.update_visibility()
     before=len(game.visible)
     assert game.guard_alert_until<=game.time
     combat=Game()
