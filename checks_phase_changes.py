@@ -49,6 +49,8 @@ def check_phase_changes():
             game.observed.update((x, y) for y in range(ROWS) for x in range(COLS))
             game.visited.update(distances(game.grid, game.spawn))
             saved_observed, saved_visited = set(game.observed), set(game.visited)
+            game.attack()
+            locked_facing = game.attack_facing
             for index in range(3):
                 old_phase = game.phase
                 old_grid = game.grid
@@ -58,6 +60,7 @@ def check_phase_changes():
                 start_shift(game)
                 assert game.grid is old_grid and game.phase == old_phase
                 assert game.time == previous_time
+                assert game.attack_time == 0 and game.attack_facing == locked_facing
                 for _ in range(4):
                     game.update(.05, 1, 1, True)
                 assert game.shift_elapsed < SHIFT_SWAP_AT and game.grid is old_grid

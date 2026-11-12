@@ -7,13 +7,11 @@ import struct
 
 ROOT = Path(__file__).resolve().parent
 DIRECTIONS = ('sw', 'nw', 'se', 'ne')
+ATTACK_DIRECTIONS = (*DIRECTIONS, 'n', 's', 'w', 'e')
 QUARTER = {
     'terrain_v1': {*(f'floor_{n}' for n in range(4)), *(f'wall_{n}' for n in range(16))},
     'props_v1': {'fountain_full', 'fountain_empty', 'rope_exit',
                  *(f'torch_wall_{side}_{state}' for side in ('left', 'right') for state in ('full', 'empty'))},
-    'shortcuts_v1': {f'{state}_{side}' for state in
-                     ('puzzle_closed', 'puzzle_open', 'trap_entry', 'trap_arrival')
-                     for side in ('south', 'east', 'north', 'west')},
     'shortcuts_v1': {f'{state}_{side}' for state in
                      ('puzzle_closed', 'puzzle_open', 'trap_entry', 'trap_arrival')
                      for side in ('south', 'east', 'north', 'west')},
@@ -36,6 +34,35 @@ def frame_check(size, rect, pivot):
     assert len(pivot) == 2 and 0 <= pivot[0] <= w and 0 <= pivot[1] <= h
 
 
+def check_dagger(player):
+    directory = ROOT/'sprite/quarter/effects'
+    effect = json.loads((directory/'dagger-slash.json').read_text(encoding='utf-8'))
+    size = png_size(directory/effect['image'])
+    assert set(effect['clips']) == set(ATTACK_DIRECTIONS)
+    assert effect['frame_size'] == [64, 64]
+    assert effect['pivot'] == effect['anchor_px'] == player['pivot'] == [32, 54]
+    assert (effect['start_ms'], effect['duration_ms'], effect['fps']) == (200, 200, 60)
+    assert (directory/'CREDITS.txt').is_file()
+    for direction in ATTACK_DIRECTIONS:
+        fx_clip = effect['clips'][direction]
+        expected_layer = 'back' if direction in ('n', 'ne', 'nw', 'w') else 'front'
+        assert fx_clip['draw_layer'] == expected_layer
+        assert len(fx_clip['frames']) == 12
+        assert len({tuple(frame['rect']) for frame in fx_clip['frames']}) == 12
+        for frame in fx_clip['frames']:
+            assert frame['rect'][2:] == effect['frame_size']
+            frame_check(size, frame['rect'], effect['pivot'])
+        clip = player['clips'][f'attack-{direction}']
+        durations, frames = clip['durations_ms'], clip['frames']
+        assert clip['direction'] == direction and not clip['loop']
+        assert durations == [70, 80, 83, 42, 58, 75, 92, 100] and len(frames) == 8
+        assert len({tuple(frame['rect']) for frame in frames}) == 8
+        assert all(frame['rect'][2:] == [64, 64] for frame in frames)
+        hit = [event for event in clip['events'] if event['name'] == 'hit']
+        assert len(hit) == 1 and hit[0]['frame'] == 3
+        assert hit[0]['at_ms'] == 233 == sum(durations[:3])
+
+
 def run(require_complete=False):
     for relative in ('sprite/wall/materials/base_a.png',
                      'sprite/surfaces/materials/floor_flagstone.png',
@@ -43,17 +70,16 @@ def run(require_complete=False):
                      'sprite/traps/iron_blade.png',
                      'sprite/traps/boulder_volume_v2/stone_material.png'):
         png_size(ROOT/relative)
-    for name in ('torch', 'sword-slash'):
-        directory = ROOT/'sprite/topdown/effects'
-        data = json.loads((directory/f'{name}.json').read_text(encoding='utf-8'))
-        size = png_size(directory/f'{name}.png')
-        for frame in data['frames']:
-            r = frame['frame']
-            frame_check(size, [r[key] for key in ('x','y','w','h')], data['meta']['pixelfx']['pivot'])
+    directory = ROOT/'sprite/topdown/effects'
+    data = json.loads((directory/'torch.json').read_text(encoding='utf-8'))
+    size = png_size(directory/data['meta']['image'])
+    for frame in data['frames']:
+        r = frame['frame']
+        frame_check(size, [r[key] for key in ('x','y','w','h')], data['meta']['pixelfx']['pivot'])
     player_dir = ROOT/'sprite/quarter/player_explorer_v1'
     player = json.loads((player_dir/'explorer.json').read_text(encoding='utf-8'))
     size = png_size(player_dir/player['image'])
-    for state in ('idle', 'walk', 'run', 'attack', 'hurt'):
+    for state in ('idle', 'walk', 'run', 'hurt'):
         for direction in DIRECTIONS:
             assert f'{state}-{direction}' in player['clips']
     # 선택적인 정면 4방향도 포함해 실제 프레임 수와 보행 메타를 검사한다.
@@ -73,7 +99,8 @@ def run(require_complete=False):
     size = png_size(dust_dir/dust['image'])
     for frame in dust['frames']:
         frame_check(size, frame['rect_top_left'], dust['pivot'])
-    ready, pending = [], []
+    check_dagger(player)
+    ready, pending = ['dagger-slash'], []
     for folder, names in QUARTER.items():
         directory = ROOT/'sprite/quarter'/folder
         catalog = directory/'catalog.json'
@@ -85,6 +112,12 @@ def run(require_complete=False):
         assert names <= data['frames'].keys(), (folder, names-data['frames'].keys())
         for frame in data['frames'].values():
             frame_check(size, frame['rect'], frame['pivot'])
+        if folder == 'props_v1':
+            for side in ('left', 'right'):
+                full = data['frames'][f'torch_wall_{side}_full']
+                empty = data['frames'][f'torch_wall_{side}_empty']
+                assert full['pivot'] == empty['pivot']
+                frame_check(size, full['rect'], full['wick_anchor'])
         ready.append(folder)
     room_dir = ROOT/'sprite/traps/boulder_room_v2'
     if (room_dir/'catalog.json').is_file():
