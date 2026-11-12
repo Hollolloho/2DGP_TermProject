@@ -4,7 +4,7 @@ import json
 import math
 from pathlib import Path
 import pico2d.pico2d as p
-from maze_model import BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS, COLS, ROWS, PHASES, TRAP_LENGTH
+from maze_model import BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS, COLS, ROWS, PHASES, DIRECTIONS, TRAP_LENGTH
 from maze_model import PHASE_SECONDS, SHIFT_SECONDS, SHIFT_SWAP_AT
 from maze_model import HALF_TILE_W, HALF_TILE_H, project
 from trap_view import Corridor
@@ -14,7 +14,6 @@ MAP_RECT = (8, 32, 496, 368)
 WALL_NEIGHBORS = ((0, -1, 1), (1, 0, 2), (0, 1, 4), (-1, 0, 8))
 MEMORY_LIGHT = .32
 LIGHT_FADE_SECONDS = .20
-TORCH_MOUNT_HEIGHT = 24
 
 
 class View:
@@ -38,13 +37,10 @@ class View:
             data = json.loads((self.root/directory/'catalog.json').read_text(encoding='utf-8'))
             self.images[name] = self.load(directory/data['image'], pixel=True)
             self.atlases[name] = data['frames']
-        torch = Path('sprite/topdown/effects/torch')
-        self.effects['torch'] = json.loads((self.root/torch.with_suffix('.json')).read_text())
-        self.images['torch'] = self.load(torch.with_suffix('.png'), pixel=True)
-        dagger_dir = Path('sprite/quarter/effects')
-        self.dagger_fx = json.loads((self.root/dagger_dir/'dagger-slash.json').read_text(encoding='utf-8'))
-        self.images['dagger-slash'] = self.load(dagger_dir/self.dagger_fx['image'], pixel=True)
-        self.atlases['dagger-slash'] = self.dagger_fx['frames']
+        for name in ('torch', 'sword-slash'):
+            data = json.loads((self.root/f'sprite/topdown/effects/{name}.json').read_text())
+            self.images[name] = self.load(f'sprite/topdown/effects/{name}.png', pixel=True)
+            self.effects[name] = data
         self.logical = self.target(LW, LH)
         self.display = self.target(LW*SCALE, LH*SCALE)
         self.corridor = Corridor(self)
@@ -130,15 +126,12 @@ class View:
         image.draw(x+image.w/2,LH-y)
 
     def player_frame(self, game):
-        return self.player_pose(game)[0]
-
-    def player_pose(self, game):
         player = game.player
         clips = self.player_catalog['clips']
-        attack = clips.get(game.attack_clip)
+        facing = self.facing[player.direction]
+        attack = clips['attack-'+facing]
         attack_ms = game.attack_time*1000
-        attacking = attack is not None and attack_ms < sum(attack['durations_ms'])
-        if attacking:
+        if attack_ms < sum(attack['durations_ms']):
             clip, elapsed_ms = attack, attack_ms
         else:
             state = {'walk': 'walk', 'sprint': 'run'}.get(player.state, 'idle')
@@ -152,32 +145,29 @@ class View:
                 # 공통 접지 위상 0에 맞는 프레임 오프셋을 더한다. 구 NW 걷기만 기본 1이다.
                 offset = clip.get('phase_offset_frames', 1 if name == 'walk-nw' else 0)
                 index = int(player.gait_phase*len(clip['frames'])+1e-9)
-                return clip['frames'][(index+offset) % len(clip['frames'])]['rect'], None
+                return clip['frames'][(index+offset) % len(clip['frames'])]['rect']
             elapsed_ms = (game.time-self.animation_started)*1000
         durations = clip['durations_ms']
         if clip['loop']:
             elapsed_ms %= sum(durations)
-        for index, (frame, duration) in enumerate(zip(clip['frames'], durations)):
+        for frame, duration in zip(clip['frames'], durations):
             if elapsed_ms < duration:
-                return frame['rect'], index if attacking else None
+                return frame['rect']
             elapsed_ms -= duration
-        return clip['frames'][-1]['rect'], None
+        return clip['frames'][-1]['rect']
 
     def player(self, x, y, game):
         scale = self.world_scale
-        frame, attack_index = self.player_pose(game)
+        frame = self.player_frame(game)
         px, py = self.player_catalog['pivot']
         self.image('player', (x-px*scale, y-py*scale, frame[2]*scale, frame[3]*scale), frame)
         if game.player.torch:
             self.effect('torch', x-8*scale, y-23*scale, game.time, .22*scale)
-        start, end = self.dagger_fx['window_ms']
-        if attack_index is not None and start <= game.attack_time*1000 < end:
-            clip = self.player_catalog['clips'][game.attack_clip]
-            if attack_index in clip.get('fx_active_frames', ()):
-                tip_x, tip_y = clip['blade_tips_px'][attack_index]
-                opacity = self.dagger_fx['opacity_by_attack_frame'][str(attack_index)]
-                self.atlas(x+(tip_x-px)*scale, y+(tip_y-py)*scale,
-                           'dagger-slash', clip['direction'], (255, 255, 255), opacity)
+        if game.attack_time < .75:
+            dx, dy = project(*DIRECTIONS[game.player.direction])
+            angle = math.degrees(math.atan2(dy, dx))
+            self.effect('sword-slash', x+dx*.5*scale, y+(dy*.5-22)*scale,
+                        game.attack_time, .55*scale, angle)
 
     def guardian(self, x, y, game, tint):
         self.atlas(x, y, 'guardian', 'idle_'+self.facing[game.guard_direction], tint)
@@ -187,14 +177,10 @@ class View:
             self.rectangle(x-12*scale, y-56*scale, 8*game.guard_hp*scale, 2*scale, (155,75,59))
 
     def prop(self, x, y, frame, tint, game):
-        scale = self.world_scale
-        if frame.startswith('torch_wall_'):
-            y -= TORCH_MOUNT_HEIGHT*scale
         self.atlas(x, y, 'props', frame, tint)
-        wick = self.atlases['props'][frame].get('wick_anchor')
-        if wick is not None and not game.player.torch:
-            px, py = self.atlases['props'][frame]['pivot']
-            self.effect('torch', x+(wick[0]-px)*scale, y+(wick[1]-py)*scale, game.time, .26*scale)
+        if frame == 'torch_stand' and not game.player.torch:
+            scale = self.world_scale
+            self.effect('torch', x, y-43*scale, game.time, .26*scale)
 
     def world(self, x, y):
         sx, sy = project(x, y)
@@ -345,18 +331,10 @@ class View:
                 mask = self.wall_mask(game, x, y)
                 place(self.shifting_wall, x+.5, y+.5, f'wall_{mask}', tint, brightness, (x, y), game)
 
-        for (x, y), frame in ((game.exit, 'rope_exit'),
+        for (x, y), frame in ((game.exit, 'rope_exit'), (game.torch_cell, 'torch_stand'),
                               (game.fountain, 'fountain_empty' if game.fountain_used else 'fountain_full')):
             if (x, y) in game.visible or game.reveal_all:
                 place(self.prop, x+.5, y+.5, frame, self.tile_tint(game, x, y), game)
-
-        x, y = game.torch_cell
-        if game.torch_wall is not None and ((x, y) in game.visible or game.reveal_all):
-            # 에셋 방향은 통로에서 본 벽 위치가 아니라 벽의 노출 면 기준이다.
-            side = 'right' if game.torch_wall[0] < x else 'left'
-            state = 'empty' if game.player.torch else 'full'
-            place(self.prop, *game.torch_wall_contact, f'torch_wall_{side}_{state}',
-                  self.tile_tint(game, x, y), game)
 
         markers = []
         for cell, arrival in ((game.trap_cell, False), (game.trap_exit, True)):

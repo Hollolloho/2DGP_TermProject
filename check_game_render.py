@@ -2,7 +2,7 @@
 import json
 import ctypes
 import pico2d.pico2d as p
-from maze_model import DIRECTIONS, TRAP_LENGTH, Game, shortest_path
+from maze_model import DIRECTIONS, TRAP_LENGTH, Game
 from maze_model import PHASE_SECONDS, PHASE_WARNING_SECONDS, SHIFT_SWAP_AT
 from maze_model import WALK_SPEED, RUN_SPEED, PLAYER_HALF_SIZE
 from game_view import LW, LH, SCALE, project
@@ -44,46 +44,6 @@ def run(app):
         # 한 칸이 틱의 정수배여도 마지막에 0초 갱신을 추가하지 않는다.
         ticks = ceil(seconds/step)
         press(*keys, timesteps=[seconds/ticks]*ticks)
-
-    def walk_path(start, end):
-        path = shortest_path(g.grid, start, end)
-        for (x, y), (nx, ny) in zip(path, path[1:]):
-            walk_tile(*diagonals[DIRECTIONS.index((nx-x, ny-y))])
-
-    def check_attack_render():
-        room = Game(g.seed, player_clips=app.view.player_catalog['clips'])
-        room.grid = [[0]*len(row) for row in room.grid]
-        room.player.x, room.player.y = 15.5, 11.5
-        room.guard = (15, 12)
-        app.game = room
-        try:
-            press(s, a, ticks=1)
-            event = p.SDL_Event()
-            event.type = p.SDL_MOUSEBUTTONDOWN
-            event.button.button = p.SDL_BUTTON_LEFT
-            assert p.SDL_PushEvent(event) == 1
-            app.handle_events()
-            clip = room.player_clips['attack-sw']
-            assert room.attack_facing == 'sw' and room.guard_hp == 3
-            assert app.view.player_frame(room) == clip['frames'][0]['rect']
-            press(w, d, ticks=1)
-            assert room.player.screen_facing == 'ne' and room.attack_facing == 'sw'
-            assert app.view.player_frame(room) == clip['frames'][0]['rect']
-            hit = next(event for event in clip['events'] if event['name'] == 'hit')
-            before_hit = hit['at_ms']/1000-room.attack_time-.001
-            ticks = ceil(before_hit/.05)
-            press(timesteps=[before_hit/ticks]*ticks)
-            assert room.guard_hp == 3
-            press(timesteps=[.002])
-            assert room.guard_hp == 2
-            assert app.view.player_frame(room) == clip['frames'][hit['frame']]['rect']
-            press(p.SDLK_r)
-            assert app.game is not room and app.game.attack_facing is None and app.game.attack_clip is None
-            assert app.game.guard_hp == 3
-            print('PASS: SDL SW attack keeps its clip while moving NE, hits on the clip event and resets on R.')
-        finally:
-            app.game = g
-            app.held.clear()
 
     def check_controls():
         room = Game(g.seed, player_clips=app.view.player_catalog['clips'])
@@ -473,16 +433,17 @@ def run(app):
         app.update(.025)
     snapshot('01-directional-view.png')
     check_controls()
-    check_attack_render()
     from checks_gait import check_gait_view
     check_gait_view(app.view)
     app.view.draw(g)
-    start_screen = app.view.world(player.x, player.y)
-    walk_path(g.spawn, g.torch_cell)
-    assert all(isclose(position, cell+.5) for position, cell in zip((player.x, player.y), g.torch_cell))
-    assert player.state == 'walk'
     press(p.SDLK_f)
     assert player.torch
+
+    forward = player.direction
+    start_screen = app.view.world(player.x, player.y)
+    walk_tile(*diagonals[forward])
+    assert all(isclose(position, cell+.5) for position, cell in zip((player.x, player.y), g.torch_cell))
+    assert player.state == 'walk'
     app.view.draw(g)
     assert app.view.world(player.x, player.y) != start_screen
     app.view.capture(output/'01b-quarter-moved.png')
@@ -498,7 +459,8 @@ def run(app):
     assert not g.map_open and not g.reveal_all
 
     # Follow the real corridor from the torch to A using regular movement input.
-    walk_path(g.torch_cell, g.trap_cell)
+    for (x, y), (nx, ny) in zip(g.path[1:5], g.path[2:6]):
+        walk_tile(*diagonals[DIRECTIONS.index((nx-x, ny-y))])
     before = player.x, player.y
     assert all(isclose(position, cell+.5) for position, cell in zip(before, g.trap_cell))
     press(p.SDLK_f)
@@ -545,5 +507,4 @@ def run(app):
         'sdl_phase_shift':True,'fixed_hud_during_shift':True,'one_shot_phase_sounds':True,
         'sdl_walk_new_passage':True,'sdl_phase_map':True,'sdl_phase_trap_return':True,
         'sdl_closed_wall_blocks':True,'new_wall_hides_old_visibility_cache':True,
-        'sdl_attack_direction_hit_and_restart':True,
         'sdl_R_before_after_swap':True},indent=2),encoding='utf-8')

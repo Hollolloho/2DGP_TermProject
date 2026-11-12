@@ -144,12 +144,6 @@ def check_clip_metadata():
                 'cycle_distance_px': (53 if state == 'walk' else 87)+index*3,
                 'phase_offset_frames': 0 if facing == 'nw' else (3 if state == 'walk' else -2),
             }
-        clips['attack-'+facing] = {
-            'frames': [{'rect': object()} for _ in range(6)],
-            'durations_ms': [83, 84, 66, 84, 100, 116],
-            'events': [{'name': 'hit', 'at_ms': 233}],
-            'loop': False,
-        }
     # player_frame은 SDL 리소스를 사용하지 않아 플레이 창 없이 실제 선택 함수를 검사한다.
     view = View.__new__(View)
     view.player_catalog, view.facing = {'clips': clips}, DIAGONAL_FACINGS
@@ -174,13 +168,10 @@ def check_clip_metadata():
                 game.update(.01)
                 assert player.screen_facing == facing and gait(player) == stopped
                 assert view.player_frame(game) is clips['idle-'+facing]['frames'][0]['rect']
-                # 공격은 클릭한 방향을 고정해 이후 이동 방향의 영향을 받지 않는다.
+                # 공격은 새 정면 idle 방향과 무관하게 원래 4방향을 사용한다.
                 game.attack()
-                attack = clips['attack-'+facing]
-                game.update(.025, -dx, -dy)
-                assert player.screen_facing != facing
-                assert game.attack_facing == facing and game.attack_hit_at == .233
-                assert view.player_frame(game) is attack['frames'][0]['rect']
+                attack = legacy['attack-'+DIAGONAL_FACINGS[player.direction]]
+                assert view.player_frame(game) == attack['frames'][0]['rect']
 
     game = room(clips)
     player = game.player
@@ -221,10 +212,7 @@ def check_clip_metadata():
         game.update(.01)
         assert game.locomotion_clip_name('idle') == 'idle-nw'
         assert view.player_frame(game) == legacy['idle-nw']['frames'][0]['rect']
-        game.attack()
-        assert game.attack_facing == 'n' and game.attack_clip == 'attack-nw'
-        assert view.player_frame(game) == legacy['attack-nw']['frames'][0]['rect']
-    print('PASS: metadata stride/offset, all 16 frame indices, 8 movement/idle and locked attack facings; legacy fallback.')
+    print('PASS: metadata stride/offset, all 16 frame indices, 8 actual movement/idle facings, legacy fallback and unchanged 4-way attacks; no image fixtures.')
 
 
 def check_gait_view(view):
