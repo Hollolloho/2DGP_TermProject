@@ -1,6 +1,0 @@
-{
-  "generator": "built-in image_gen",
-  "date": "2026-11-06",
-  "material": "Use case: stylized-concept. Production game ALBEDO MATERIAL texture for a massive ancient limestone rolling trap boulder. Input image: existing labyrinth wall material and palette reference ONLY. Generate a flat tileable seamless wide 2:1 equirectangular stone surface texture, filling the entire canvas edge-to-edge. NO sphere, NO scene, NO bricks or masonry joints. Muted medium grey-brown limestone with slightly cooler grey chips, fine realistic pitted grain, a few BROAD shallow angular weathered fractures with varied widths, sparse irregular darker mineral veins and several larger chipped/abraded patches to make rotation readable from a distance. Cracks must be sparse, unevenly distributed and physically plausible, NOT a uniform tiled grid, not all-over tiny crazing. Moderate contrast, mineral variation across 15-30% of the texture, clearly visible but not black-painted outlines. Old dry subterranean stone, matte and weighty, no metal, no shine. Uniform diffuse illumination, no directional light, no baked sphere shadow or ambient vignette. All edges must wrap naturally, left to right especially. Realistic high-detail game surface, NOT pixel art, no text, no border.",
-  "reference": "sprite/wall/materials/base_a.png"
-}
