@@ -2,7 +2,7 @@
 import json
 import ctypes
 import pico2d.pico2d as p
-from maze_model import DIRECTIONS, TRAP_LENGTH, Game
+from maze_model import DIRECTIONS, TRAP_LENGTH, Game, shortest_path
 from maze_model import PHASE_SECONDS, PHASE_WARNING_SECONDS, SHIFT_SWAP_AT
 from maze_model import WALK_SPEED, RUN_SPEED, PLAYER_HALF_SIZE
 from game_view import LW, LH, SCALE, project
@@ -249,6 +249,12 @@ def run(app):
             app.game = g
             app.held.clear()
 
+    def walk_path(start, end):
+        path = shortest_path(g.grid, start, end)
+        for (x, y), (nx, ny) in zip(path, path[1:]):
+            walk_tile(*diagonals[DIRECTIONS.index((nx-x, ny-y))])
+
+
     def snapshot(name):
         # Draw once to start a mode transition, then capture after its fade.
         app.view.draw(g)
@@ -436,14 +442,12 @@ def run(app):
     from checks_gait import check_gait_view
     check_gait_view(app.view)
     app.view.draw(g)
-    press(p.SDLK_f)
-    assert player.torch
-
-    forward = player.direction
     start_screen = app.view.world(player.x, player.y)
-    walk_tile(*diagonals[forward])
+    walk_path(g.spawn, g.torch_cell)
     assert all(isclose(position, cell+.5) for position, cell in zip((player.x, player.y), g.torch_cell))
     assert player.state == 'walk'
+    press(p.SDLK_f)
+    assert player.torch
     app.view.draw(g)
     assert app.view.world(player.x, player.y) != start_screen
     app.view.capture(output/'01b-quarter-moved.png')
@@ -459,8 +463,7 @@ def run(app):
     assert not g.map_open and not g.reveal_all
 
     # Follow the real corridor from the torch to A using regular movement input.
-    for (x, y), (nx, ny) in zip(g.path[1:5], g.path[2:6]):
-        walk_tile(*diagonals[DIRECTIONS.index((nx-x, ny-y))])
+    walk_path(g.torch_cell, g.trap_cell)
     before = player.x, player.y
     assert all(isclose(position, cell+.5) for position, cell in zip(before, g.trap_cell))
     press(p.SDLK_f)

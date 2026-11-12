@@ -9,7 +9,11 @@ ROOT = Path(__file__).resolve().parent
 DIRECTIONS = ('sw', 'nw', 'se', 'ne')
 QUARTER = {
     'terrain_v1': {*(f'floor_{n}' for n in range(4)), *(f'wall_{n}' for n in range(16))},
-    'props_v1': {'fountain_full', 'fountain_empty', 'torch_stand', 'rope_exit'},
+    'props_v1': {'fountain_full', 'fountain_empty', 'rope_exit',
+                 *(f'torch_wall_{side}_{state}' for side in ('left', 'right') for state in ('full', 'empty'))},
+    'shortcuts_v1': {f'{state}_{side}' for state in
+                     ('puzzle_closed', 'puzzle_open', 'trap_entry', 'trap_arrival')
+                     for side in ('south', 'east', 'north', 'west')},
     'shortcuts_v1': {f'{state}_{side}' for state in
                      ('puzzle_closed', 'puzzle_open', 'trap_entry', 'trap_arrival')
                      for side in ('south', 'east', 'north', 'west')},
