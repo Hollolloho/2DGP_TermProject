@@ -1,6 +1,8 @@
 """Small model checks: python checks_topdown.py; no SDL window required."""
 import math
 from checks_phase_changes import check_phase_changes, finish_shift
+from checks_gait import check_gait
+from maze_model import WALK_SPEED, project as project_ground
 from maze_model import Game, COLS, ROWS, DIRECTIONS, distances, TRAP_LENGTH, TRAP_PLANES, TRAP_LATERAL, BLADE_RADIUS, PLAYER_RADIUS, blade_position
 
 
@@ -28,6 +30,7 @@ def check_visibility():
 
 
 def run():
+    check_gait()
     check_phase_changes()
     check_visibility()
     for seed in range(32):
@@ -85,7 +88,7 @@ def run():
     # suddenly carved through unrelated grid walls.
     demo=Game()
     assert demo.shortcut_distance>=15 and distances(demo.grid,demo.exit)[demo.trap_exit]>=10
-    assert TRAP_LENGTH/1.8+.56 < demo.shortcut_distance/2.5
+    assert TRAP_LENGTH/1.8+.56 < demo.shortcut_distance*math.hypot(*project_ground(1, 0))/WALK_SPEED
     demo.player.x,demo.player.y=demo.trap_cell[0]+.5,demo.trap_cell[1]+.5
     demo.interact()
     demo.trap_progress=TRAP_PLANES[0]

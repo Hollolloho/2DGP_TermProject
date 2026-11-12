@@ -139,6 +139,12 @@ class View:
                 self.animated_player, self.animation_state = player, state
                 self.animation_started = game.time
             clip = clips[state+'-'+facing]
+            if state in ('walk', 'run'):
+                # 거리 위상만 읽는다. 렌더 횟수·시간·카메라·확대는 보행을 진행시키지 않는다.
+                # NW 걷기는 지지 시작 후보가 1/5번이라 다른 클립의 0/4번에 맞춘다.
+                offset = 1 if state == 'walk' and facing == 'nw' else 0
+                index = int(player.gait_phase*len(clip['frames'])+1e-9)
+                return clip['frames'][(index+offset) % len(clip['frames'])]['rect']
             elapsed_ms = (game.time-self.animation_started)*1000
         durations = clip['durations_ms']
         if clip['loop']:

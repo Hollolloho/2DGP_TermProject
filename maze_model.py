@@ -8,7 +8,15 @@ from transitions import Machine
 COLS, ROWS = 31, 23
 # 쿼터뷰 지면의 반쪽 타일 크기. 렌더링과 이동 속도 계산이 같은 투영을 사용한다.
 HALF_TILE_W, HALF_TILE_H = 32, 16
-PLAYER_HALF_SIZE = .21
+# 64×64 원본·pivot(32,54)의 지지 발 후보를 수동 비교한 근사 보폭(px/주기).
+# 걷기 2프레임에 약 5~7px, 달리기 2프레임에 약 8~10px의 후방 이동을 기준으로 한다.
+# 발 식별·접지 메타데이터가 없어 완전한 발 고정값은 아니다.
+WALK_CYCLE_PX, RUN_CYCLE_PX = 24., 40.
+# 원본의 8프레임·10/15fps 리듬을 유지하도록 보폭에서 논리 지면 속도를 정한다.
+WALK_SPEED = WALK_CYCLE_PX * 10 / 8
+RUN_SPEED = RUN_CYCLE_PX * 15 / 8
+PLAYER_HALF_SIZE = .21  # 미로 충돌 상자의 반폭(격자 단위). 함정방 반지름과 별개다.
+MOVE_EPSILON = 1e-7  # 벽 면과 겹치지 않도록 남기는 격자 단위의 미세한 간격.
 BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS = 5.5, 7
 DIRECTIONS = ((0, 1), (-1, 0), (1, 0), (0, -1))  # down, left, right, up
 PHASES = ('낮', '밤', '새벽')
@@ -201,6 +209,8 @@ class Player:
     hp: int = 100
     stamina: float = 100
     torch: bool = False
+    gait_distance: float = 0.  # 충돌 처리 후 실제 걸은 논리 지면 거리. 순간이동은 제외한다.
+    gait_phase: float = 0.  # 걷기·달리기·방향이 바뀌어도 유지하는 0~1 주기 위치.
 
 
 class Game:
@@ -282,6 +292,41 @@ class Game:
         return all(not self.solid(math.floor(x+dx), math.floor(y+dy), grid)
                    for dx in (-PLAYER_HALF_SIZE, PLAYER_HALF_SIZE)
                    for dy in (-PLAYER_HALF_SIZE, PLAYER_HALF_SIZE))
+
+    def move_straight(self, dx, dy):
+        """입력 선을 따라 벽 직전까지만 이동하고, 실제 이동량을 돌려준다."""
+        if dx == 0 and dy == 0:
+            return 0., 0.
+        x, y = self.player.x, self.player.y
+        radius = PLAYER_HALF_SIZE
+        fraction = 1.0
+        # 지나갈 영역의 벽만 확인한다. 끝점이 비어 있어도 중간 모퉁이는 통과할 수 없다.
+        for wall_y in range(math.floor(min(y, y+dy)-radius), math.floor(max(y, y+dy)+radius)+1):
+            for wall_x in range(math.floor(min(x, x+dx)-radius), math.floor(max(x, x+dx)+radius)+1):
+                if not self.solid(wall_x, wall_y):
+                    continue
+                # 벽을 몸 반폭만큼 넓히면 플레이어 중심을 점으로 계산할 수 있다.
+                enter, leave = -math.inf, math.inf
+                for position, delta, low, high in (
+                        (x, dx, wall_x-radius, wall_x+1+radius),
+                        (y, dy, wall_y-radius, wall_y+1+radius)):
+                    if delta == 0:
+                        if position <= low or position >= high:
+                            break
+                    else:
+                        first, last = (low-position)/delta, (high-position)/delta
+                        enter = max(enter, min(first, last))
+                        leave = min(leave, max(first, last))
+                else:
+                    if enter <= leave and leave > 0 and enter <= fraction:
+                        gap = MOVE_EPSILON / max(abs(dx), abs(dy))
+                        fraction = max(0., enter-gap)
+        moved_x, moved_y = dx*fraction, dy*fraction
+        if max(abs(moved_x), abs(moved_y)) < MOVE_EPSILON:
+            return 0., 0.
+        self.player.x += moved_x
+        self.player.y += moved_y
+        return moved_x, moved_y
 
     def safe_position(self, next_grid):
         """몸 전체가 들어가면 유지하고, 아니면 이전 통로를 따라 공통 통로를 찾는다."""
@@ -465,23 +510,22 @@ class Game:
             return
         if self.map_open:
             dx = dy = 0
-        magnitude = math.hypot(dx, dy)
+        # 격자 거리 대신 투영된 지면 거리로 정규화한다. 대각선의 2:1 방향은 유지한다.
+        magnitude = math.hypot(*project(dx, dy))
         running = sprint and self.player.stamina > 0
         vx = vy = 0.
         if magnitude:
-            speed = 4.1 if running else 2.5
-            vx, vy = dx/magnitude*dt*speed, dy/magnitude*dt*speed
-            if self.can_stand(self.player.x+vx, self.player.y):
-                self.player.x += vx
-            else:
-                vx = 0
-            if self.can_stand(self.player.x, self.player.y+vy):
-                self.player.y += vy
-            else:
-                vy = 0
+            speed = RUN_SPEED if running else WALK_SPEED
+            vx, vy = self.move_straight(dx/magnitude*dt*speed, dy/magnitude*dt*speed)
             if running:
                 self.player.stamina = max(0, self.player.stamina-dt*18)
         if vx or vy:
+            distance = math.hypot(*project(vx, vy))
+            self.player.gait_distance += distance
+            cycle = RUN_CYCLE_PX if running else WALK_CYCLE_PX
+            phase = (self.player.gait_phase + distance/cycle) % 1.
+            # dt 분할에 따른 부동소수점 오차가 주기 경계의 프레임을 바꾸지 않게 한다.
+            self.player.gait_phase = 0. if min(phase, 1.-phase) < 1e-10 else phase
             # A screen-axis move ties two clips. Keep the current one if it fits.
             alignment = [vx*x+vy*y for x, y in DIRECTIONS]
             best = max(alignment)
@@ -491,6 +535,6 @@ class Game:
                 self.player.sprint_now()
             else:
                 self.player.walk_now()
-        elif self.attack_time >= .75:
+        elif self.player.state in ('walk', 'sprint') or self.attack_time >= .75:
             self.player.rest()
         self.update_visibility()
