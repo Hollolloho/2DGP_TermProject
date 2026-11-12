@@ -1,5 +1,6 @@
 """Small model checks: python checks_topdown.py; no SDL window required."""
 import math
+from checks_phase_changes import check_phase_changes, finish_shift
 from maze_model import Game, COLS, ROWS, DIRECTIONS, distances, TRAP_LENGTH, TRAP_PLANES, TRAP_LATERAL, BLADE_RADIUS, PLAYER_RADIUS, blade_position
 
 
@@ -27,6 +28,7 @@ def check_visibility():
 
 
 def run():
+    check_phase_changes()
     check_visibility()
     for seed in range(32):
         game=Game(seed)
@@ -62,6 +64,8 @@ def run():
     assert game.state=='trap'
     game.phase_time=59.99
     game.update(.02,1,-1)
+    assert game.state=='shifting' and (game.player.x,game.player.y)==saved
+    finish_shift(game)
     assert game.state=='explore' and (game.player.x,game.player.y)==saved
     game.interact()
     game.trap_progress=1

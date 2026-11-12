@@ -29,6 +29,9 @@ class PlayMode:
             elif event.type == p.SDL_KEYUP:
                 self.held.discard(event.key)
             elif event.type == p.SDL_KEYDOWN:
+                # pico2d는 OS 반복 입력을 걸러 준다. 변형 중 새로 누른 키도 보관하지 않는다.
+                if self.game.state == 'shifting' and event.key not in (p.SDLK_r, p.SDLK_ESCAPE, p.SDLK_F10):
+                    continue
                 self.held.add(event.key)
                 if event.key == p.SDLK_ESCAPE:
                     if self.game.map_open:
@@ -62,7 +65,7 @@ class PlayMode:
         dy = int(p.SDLK_s in self.held)-int(p.SDLK_w in self.held)
         previous = self.game.state
         if previous == 'explore':
-            # Invert the quarter-view axes before normalizing movement on the grid.
+            # WASD는 화면 상하좌우, 두 키는 2:1 통로 방향. 화면 거리 정규화는 Game이 맡는다.
             dx, dy = dx+dy, dy-dx
         self.game.update(dt,dx,dy,bool(self.held & {p.SDLK_LSHIFT,p.SDLK_RSHIFT}))
         if previous!=self.game.state:
@@ -74,9 +77,11 @@ class PlayMode:
         self.output.mkdir(parents=True,exist_ok=True)
         g=self.game
         (self.output/'session.json').write_text(json.dumps({'mode':g.state,'player':[round(g.player.x,3),round(g.player.y,3)],
-            'spawn':g.spawn,'trap':g.trap_cell,'phase':g.phase,'run':g.run_number,'torch':g.player.torch,
+            'spawn':g.spawn,'trap':g.trap_cell,'phase':g.phase,'layout_phase':g.layout_phase,
+            'layout_revision':g.layout_revision,'run':g.run_number,'torch':g.player.torch,
             'map_open':g.map_open,'full_view':g.reveal_all,'visited':len(g.visited),
             'player_fsm':g.player.state,'time':round(g.time,2)},indent=2),encoding='utf-8')
+
 
     def render(self, dt):
         self.view.draw(self.game, 1 / max(.001, dt))

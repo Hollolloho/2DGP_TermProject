@@ -5,18 +5,15 @@ import math
 from pathlib import Path
 import pico2d.pico2d as p
 from maze_model import BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS, COLS, ROWS, PHASES, DIRECTIONS, TRAP_LENGTH
+from maze_model import PHASE_SECONDS, SHIFT_SECONDS, SHIFT_SWAP_AT
+from maze_model import HALF_TILE_W, HALF_TILE_H, project
 from trap_view import Corridor
 
 LW, LH, SCALE = 640, 400, 2
 MAP_RECT = (8, 32, 496, 368)
-HALF_TILE_W, HALF_TILE_H = 32, 16
 WALL_NEIGHBORS = ((0, -1, 1), (1, 0, 2), (0, 1, 4), (-1, 0, 8))
 MEMORY_LIGHT = .32
 LIGHT_FADE_SECONDS = .20
-
-
-def project(x, y):
-    return HALF_TILE_W*(x-y), HALF_TILE_H*(x+y)
 
 
 class View:
@@ -51,8 +48,10 @@ class View:
         self.camera, self.camera_game = None, None
         self.light_game, self.light_time, self.torch_light = None, 0., 0.
         self.discovery, self.exposure = {}, {}
+        self.light_revision = -1
         self.animated_player, self.animation_state, self.animation_started = None, None, 0
         self.last_mode, self.mode_changed = None, -10
+        self.mode_game = None
 
     def load(self, path, pixel=False):
         image = p.load_image(str(self.root/path))
@@ -220,14 +219,16 @@ class View:
         self.atlas(x, y, 'shortcuts', frame, tint)
 
     def update_lighting(self, game):
-        if game is not self.light_game:
+        if game is not self.light_game or self.light_revision != game.layout_revision:
             self.light_game = game
-            self.light_time = game.time
+            self.light_revision = game.layout_revision
+            self.light_time = game.ui_time
             self.torch_light = float(game.player.torch)
+            # 다른 시간대 캐시로 새 벽 너머나 미방문 칸이 드러나지 않게 초기화한다.
             self.discovery = dict.fromkeys(game.observed, 1.)
             self.exposure = dict.fromkeys(game.visible, 1.)
-        step = min(1., max(0., game.time-self.light_time)/LIGHT_FADE_SECONDS)
-        self.light_time = game.time
+        step = min(1., max(0., game.ui_time-self.light_time)/LIGHT_FADE_SECONDS)
+        self.light_time = game.ui_time
         self.torch_light = min(1., self.torch_light+step) if game.player.torch else max(0., self.torch_light-step)
         for cell in game.observed:
             self.discovery[cell] = min(1., self.discovery.get(cell, 0.)+step)
@@ -253,12 +254,24 @@ class View:
         tint, brightness = self.terrain_light(game, x, y)
         return tuple(round(channel*brightness) for channel in tint)
 
-    def terrain(self, x, y, frame, tint, brightness):
+    def terrain(self, x, y, frame, tint, brightness, opacity=1.):
         if brightness > 0:
-            self.atlas(x, y, 'terrain', frame, tint)
+            self.atlas(x, y, 'terrain', frame, tint, opacity)
         if brightness < 1:
             # Shade only the sprite's shape. The underlying wall stays opaque.
-            self.atlas(x, y, 'terrain', frame, (0, 0, 0), 1.-brightness)
+            self.atlas(x, y, 'terrain', frame, (0, 0, 0), (1.-brightness)*opacity)
+
+    def shifting_wall(self, x, y, frame, tint, brightness, cell, game):
+        """바뀌는 벽만 내려앉거나 솟아오르게 한다. 충돌은 모델의 교체 시점을 따른다."""
+        opacity = 1.
+        if game.state == 'shifting' and cell in game.shift_cells:
+            if game.shift_applied:
+                opacity = (game.shift_elapsed-SHIFT_SWAP_AT)/(SHIFT_SECONDS-SHIFT_SWAP_AT)
+            else:
+                opacity = 1.-game.shift_elapsed/SHIFT_SWAP_AT
+            opacity = max(0., min(1., opacity))
+        # 테스트 연출값: 최대 24 논리 픽셀을 내려서 기존 벽 에셋을 재사용한다.
+        self.terrain(x, y+(1.-opacity)*24*self.world_scale, frame, tint, brightness, opacity)
 
     def wall_mask(self, game, x, y):
         mask = 0
@@ -286,6 +299,11 @@ class View:
     def quarter(self, game):
         self.clear((0, 0, 0, 255))
         self.position_camera(game)
+        if game.state == 'shifting':
+            # 테스트 진동: 미로 좌표만 최대 2픽셀 이동하며 HUD·지도는 고정한다.
+            pulse = math.sin(math.pi*game.shift_elapsed/SHIFT_SECONDS)
+            shake = round(2*pulse*math.sin(game.shift_elapsed*80))
+            self.origin = self.origin[0]+shake, self.origin[1]-shake
         self.update_lighting(game)
         left, top, width, height = MAP_RECT
         p.SDL_RenderSetClipRect(p.renderer, p.SDL_Rect(*MAP_RECT))
@@ -304,7 +322,7 @@ class View:
             self.terrain(sx, sy, f'floor_{variant}', tint, brightness)
             if game.grid[y][x]:
                 mask = self.wall_mask(game, x, y)
-                place(self.terrain, x+.5, y+.5, f'wall_{mask}', tint, brightness)
+                place(self.shifting_wall, x+.5, y+.5, f'wall_{mask}', tint, brightness, (x, y), game)
 
         for (x, y), frame in ((game.exit, 'rope_exit'), (game.torch_cell, 'torch_stand'),
                               (game.fountain, 'fountain_empty' if game.fountain_used else 'fountain_full')):
@@ -345,7 +363,11 @@ class View:
         self.text('HP',12,14,(207,202,184))
         self.rectangle(33,11,80,5,(48,45,41))
         self.rectangle(33,11,game.player.hp*.8,5,(169,83,64))
+        self.text('ST',126,14,(207,202,184))
+        self.rectangle(148,11,70,5,(48,45,41))
+        self.rectangle(148,11,game.player.stamina*.7,5,(113,143,106))
         self.text('칼날의 통로',272,15,(217,198,154),size='font')
+        self.text(f'{PHASES[game.phase]} {math.ceil(PHASE_SECONDS-game.phase_time):02d}s',417,14,(217,190,131))
         self.text('A 입구 → B 출구',537,14,(134,192,179))
         self.rectangle(0,397,640,3,(28,32,31))
         self.rectangle(0,397,640*game.trap_progress,3,(179,151,94))
@@ -358,6 +380,8 @@ class View:
         if game.time<game.banner_until:
             self.rectangle(145,35,350,21,(12,16,18,205))
             self.text(game.banner,155,45,(221,203,165))
+        if game.phase_warning:
+            self.text('곧 미로 변형 · 입장 전 위치로 복귀',190,69,(239,183,104),size='font')
 
     def hud(self, game, fps=0):
         self.rectangle(0,0,640,30,(12,18,22))
@@ -365,8 +389,14 @@ class View:
         self.rectangle(512,30,128,370,(16,23,27))
         self.rectangle(512,30,1,370,(71,77,70))
         self.text('미궁 탐색 · 쿼터뷰',523,49,size='font')
-        self.text(f'{PHASES[game.phase]}  {60-int(game.phase_time):02d}s',523,73,(217,190,131),size='font')
-        self.text('현재는 조명만 전환',523,91,(129,139,137))
+        self.text(f'{PHASES[game.phase]}  {math.ceil(PHASE_SECONDS-game.phase_time):02d}s',523,73,(217,190,131),size='font')
+        if game.state == 'shifting':
+            phase_status = '벽·통로 변형 중'
+        elif game.phase_warning:
+            phase_status = f'곧 {PHASES[(game.phase+1) % 3]} · 변형 예고'
+        else:
+            phase_status = f'적용 지형 · {PHASES[game.layout_phase]}'
+        self.text(phase_status,523,91,(217,180,115) if game.phase_warning else (129,139,137))
         for y,label,value,color in [(115,'HP',game.player.hp,(158,77,66)),(148,'ST',game.player.stamina,(113,143,106))]:
             self.text(f'{label}  {int(value):3d}',523,y,(194,198,182))
             self.rectangle(523,y+10,104,6,(36,43,44))
@@ -387,7 +417,7 @@ class View:
 
     def map_overlay(self, game):
         self.rectangle(0,0,640,400,(5,10,14,244))
-        self.text('방문 지도',40,37,size='title')
+        self.text(f'{PHASES[game.phase]} 방문 지도',40,37,size='title')
         self.text('지나간 통로만 표시 · M / Esc 닫기 · 세계 시간은 계속 진행',40,64)
         step,ox,oy=11,145,100
         for x,y in game.visited:
@@ -423,9 +453,12 @@ class View:
             self.rectangle(0,0,LW,LH,(0,0,0,240))
             self.text('실패',275,180,(218,126,109),size='big')
             self.text('체력이 0이 됐습니다 · R 새 회차',230,236,size='font')
-        if self.last_mode != game.state:
-            self.last_mode,self.mode_changed=game.state,game.time
-        fade=max(0,1-(game.time-self.mode_changed)/.28)
+        # 탐색↔변형에는 전체 암전을 넣지 않아 벽 연출과 고정 HUD가 보이게 한다.
+        display_mode = 'explore' if game.state == 'shifting' else game.state
+        if self.mode_game is not game or self.last_mode != display_mode:
+            self.mode_game = game
+            self.last_mode, self.mode_changed = display_mode, game.ui_time
+        fade=max(0,1-(game.ui_time-self.mode_changed)/.28)
         if fade:
             self.rectangle(0,0,LW,LH,(0,0,0,round(255*fade)))
         p.SDL_SetRenderTarget(p.renderer,self.display)
