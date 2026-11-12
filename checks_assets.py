@@ -1,6 +1,7 @@
 """Check retained assets and new atlas contracts; --require-complete rejects pending art."""
 import argparse
 import json
+import math
 from pathlib import Path
 import struct
 
@@ -50,11 +51,19 @@ def run(require_complete=False):
     size = png_size(player_dir/player['image'])
     for state in ('idle', 'walk', 'run', 'attack', 'hurt'):
         for direction in DIRECTIONS:
-            clip = player['clips'][f'{state}-{direction}']
-            assert len(clip['frames']) == len(clip['durations_ms'])
-            assert all(duration > 0 for duration in clip['durations_ms'])
-            for frame in clip['frames']:
-                frame_check(size, frame['rect'], player['pivot'])
+            assert f'{state}-{direction}' in player['clips']
+    # 선택적인 정면 4방향도 포함해 실제 프레임 수와 보행 메타를 검사한다.
+    for name, clip in player['clips'].items():
+        assert clip['frames'] and len(clip['frames']) == len(clip['durations_ms'])
+        assert all(duration > 0 for duration in clip['durations_ms'])
+        for frame in clip['frames']:
+            frame_check(size, frame['rect'], player['pivot'])
+        if name.startswith(('walk-', 'run-')):
+            if 'cycle_distance_px' in clip:
+                cycle = clip['cycle_distance_px']
+                assert math.isfinite(cycle) and cycle > 0, name
+            if 'phase_offset_frames' in clip:
+                assert type(clip['phase_offset_frames']) is int, name
     dust_dir = ROOT/'sprite/traps/boulder_chase_v1'
     dust = json.loads((dust_dir/'catalog.json').read_text(encoding='utf-8'))['dust']
     size = png_size(dust_dir/dust['image'])

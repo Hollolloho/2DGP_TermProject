@@ -12,13 +12,14 @@ HALF_TILE_W, HALF_TILE_H = 32, 16
 # 걷기 2프레임에 약 5~7px, 달리기 2프레임에 약 8~10px의 후방 이동을 기준으로 한다.
 # 발 식별·접지 메타데이터가 없어 완전한 발 고정값은 아니다.
 WALK_CYCLE_PX, RUN_CYCLE_PX = 24., 40.
-# 원본의 8프레임·10/15fps 리듬을 유지하도록 보폭에서 논리 지면 속도를 정한다.
-WALK_SPEED = WALK_CYCLE_PX * 10 / 8
-RUN_SPEED = RUN_CYCLE_PX * 15 / 8
+# 기존 대각선 통로의 이동 속도를 복구한다. 보행 주기는 각 클립의 보폭 메타로 조절한다.
+WALK_SPEED = 2.5 * math.hypot(HALF_TILE_W, HALF_TILE_H)
+RUN_SPEED = 4.1 * math.hypot(HALF_TILE_W, HALF_TILE_H)
 PLAYER_HALF_SIZE = .21  # 미로 충돌 상자의 반폭(격자 단위). 함정방 반지름과 별개다.
 MOVE_EPSILON = 1e-7  # 벽 면과 겹치지 않도록 남기는 격자 단위의 미세한 간격.
 BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS = 5.5, 7
 DIRECTIONS = ((0, 1), (-1, 0), (1, 0), (0, -1))  # down, left, right, up
+DIAGONAL_FACINGS = ('sw', 'nw', 'se', 'ne')
 PHASES = ('낮', '밤', '새벽')
 # 플레이테스트용 기본값. 최종 시간·연출 강도는 조정할 수 있다.
 PHASE_SECONDS, PHASE_WARNING_SECONDS = 60.0, 5.0
@@ -211,11 +212,13 @@ class Player:
     torch: bool = False
     gait_distance: float = 0.  # 충돌 처리 후 실제 걸은 논리 지면 거리. 순간이동은 제외한다.
     gait_phase: float = 0.  # 걷기·달리기·방향이 바뀌어도 유지하는 0~1 주기 위치.
+    screen_facing: str = ''  # 실제 지면 이동으로 정한 8방향. 멈춘 뒤에도 유지한다.
 
 
 class Game:
-    def __init__(self, seed=117, run_number=0):
+    def __init__(self, seed=117, run_number=0, player_clips=None):
         self.seed, self.run_number = seed, run_number
+        self.player_clips = player_clips if player_clips is not None else {}
         self.grid = make_maze(seed)
         self.exit = (COLS//2, ROWS//2)
         paths = distances(self.grid, self.exit)
@@ -283,6 +286,11 @@ class Game:
 
     def message(self, text, seconds=3):
         self.banner, self.banner_until = text, self.time+seconds
+
+    def locomotion_clip_name(self, state):
+        """모델의 보폭과 뷰의 프레임이 같은 클립을 사용한다. 구 에셋은 4방향으로 대체한다."""
+        name = state+'-'+self.player.screen_facing
+        return name if name in self.player_clips else state+'-'+DIAGONAL_FACINGS[self.player.direction]
 
     def solid(self, x, y, grid=None):
         grid = self.grid if grid is None else grid
@@ -520,17 +528,21 @@ class Game:
             if running:
                 self.player.stamina = max(0, self.player.stamina-dt*18)
         if vx or vy:
-            distance = math.hypot(*project(vx, vy))
-            self.player.gait_distance += distance
-            cycle = RUN_CYCLE_PX if running else WALK_CYCLE_PX
-            phase = (self.player.gait_phase + distance/cycle) % 1.
-            # dt 분할에 따른 부동소수점 오차가 주기 경계의 프레임을 바꾸지 않게 한다.
-            self.player.gait_phase = 0. if min(phase, 1.-phase) < 1e-10 else phase
             # A screen-axis move ties two clips. Keep the current one if it fits.
             alignment = [vx*x+vy*y for x, y in DIRECTIONS]
             best = max(alignment)
             if alignment[self.player.direction] < best:
                 self.player.direction = alignment.index(best)
+            sx, sy = project(vx, vy)
+            self.player.screen_facing = (('s' if sy > 1e-8 else 'n' if sy < -1e-8 else '')
+                                         + ('e' if sx > 1e-8 else 'w' if sx < -1e-8 else ''))
+            distance = math.hypot(sx, sy)
+            self.player.gait_distance += distance
+            clip = self.player_clips.get(self.locomotion_clip_name('run' if running else 'walk'), {})
+            cycle = clip.get('cycle_distance_px', RUN_CYCLE_PX if running else WALK_CYCLE_PX)
+            phase = (self.player.gait_phase + distance/cycle) % 1.
+            # dt 분할에 따른 부동소수점 오차가 주기 경계의 프레임을 바꾸지 않게 한다.
+            self.player.gait_phase = 0. if min(phase, 1.-phase) < 1e-10 else phase
             if running:
                 self.player.sprint_now()
             else:
