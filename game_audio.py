@@ -9,6 +9,8 @@ class Audio:
         self.previous_mode=None
         self.step_index=-1
         self.whoosh_index=-1
+        self.game = None
+        self.warning_played = False
         if p.audio_on:
             self.step=p.load_wav(str(Path(root)/'sound/stone_step.wav'))
             self.blade=p.load_wav(str(Path(root)/'sound/blade_pass.wav'))
@@ -16,6 +18,19 @@ class Audio:
             self.blade.set_volume(20)
 
     def update(self,game):
+        if self.game is not game:
+            self.game = game
+            self.previous_mode = None
+            self.warning_played = False
+        if not game.phase_warning:
+            self.warning_played = False
+        if game.phase_warning and not self.warning_played:
+            self.warning_played = True
+            # 전용 음향 연결 전에는 기존 효과음을 예고·돌 움직임에 재사용한다.
+            if self.blade:
+                self.blade.play()
+        if game.state == 'shifting' and self.previous_mode != 'shifting' and self.step:
+            self.step.play()
         if game.state!='trap':
             self.previous_mode=game.state
             return
