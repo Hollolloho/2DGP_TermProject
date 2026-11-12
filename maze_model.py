@@ -20,6 +20,7 @@ MOVE_EPSILON = 1e-7  # 벽 면과 겹치지 않도록 남기는 격자 단위의
 BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS = 5.5, 7
 DIRECTIONS = ((0, 1), (-1, 0), (1, 0), (0, -1))  # down, left, right, up
 DIAGONAL_FACINGS = ('sw', 'nw', 'se', 'ne')
+ATTACK_COOLDOWN, DEFAULT_ATTACK_HIT = .75, .233
 PHASES = ('낮', '밤', '새벽')
 # 플레이테스트용 기본값. 최종 시간·연출 강도는 조정할 수 있다.
 PHASE_SECONDS, PHASE_WARNING_SECONDS = 60.0, 5.0
@@ -32,6 +33,10 @@ TRAP_PLANES = (.30, .58, .82)
 def project(x, y):
     """카메라와 확대를 제외한 논리 화면의 지면 좌표로 바꾼다."""
     return HALF_TILE_W*(x-y), HALF_TILE_H*(x+y)
+
+
+ATTACK_FORWARD = {facing: project(*direction) for facing, direction in zip(DIAGONAL_FACINGS, DIRECTIONS)}
+ATTACK_FORWARD.update(n=(0, -1), s=(0, 1), w=(-1, 0), e=(1, 0))
 
 
 def blade_position(time, index):
@@ -276,6 +281,8 @@ class Game:
         self.shift_cells = set()
         self.layout_revision = 0
         self.attack_time = 10.0
+        self.attack_facing = self.attack_clip = None
+        self.attack_hit_at = DEFAULT_ATTACK_HIT
         self.observed_by_phase = [set() for _ in PHASES]
         self.visited_by_phase = [set() for _ in PHASES]
         self.observed = self.observed_by_phase[self.phase]
@@ -444,6 +451,7 @@ class Game:
             self.trap_velocity = self.trap_side_velocity = self.trap_stride = 0.0
             self.trap_discovered = True
             self.map_open = False
+            self.attack_facing = self.attack_clip = None
             self.enter_room()
             self.message(f'A 입구 → B 출구 · 일반 통로 {self.shortcut_distance}칸을 우회', 5)
         elif self.close_to(self.fountain):
@@ -454,6 +462,7 @@ class Game:
                 self.player.hp = min(100, self.player.hp+35)
                 self.message('샘물 사용 · 체력 회복')
         elif self.close_to(self.exit):
+            self.attack_facing = self.attack_clip = None
             self.escape()
         self.update_visibility()
 
@@ -474,11 +483,25 @@ class Game:
         self.update_visibility()
 
     def attack(self):
-        if self.state != 'explore' or self.map_open or self.attack_time < .75:
+        if self.state != 'explore' or self.map_open or self.attack_time < ATTACK_COOLDOWN:
             return
+        diagonal = DIAGONAL_FACINGS[self.player.direction]
+        self.attack_facing = self.player.screen_facing or diagonal
+        clip = 'attack-'+self.attack_facing
+        self.attack_clip = clip if clip in self.player_clips else 'attack-'+diagonal
+        events = self.player_clips.get(self.attack_clip, {}).get('events', ())
+        self.attack_hit_at = next((event['at_ms']/1000 for event in events if event['name'] == 'hit'),
+                                  DEFAULT_ATTACK_HIT)
         self.attack_time = 0
         self.player.swing()
-        if self.guard_hp > 0 and self.close_to(self.guard, 1.8):
+
+    def hit_guard(self):
+        if self.guard_hp <= 0 or not self.close_to(self.guard, 1.8):
+            return
+        gx, gy = self.guard
+        dx, dy = project(gx+.5-self.player.x, gy+.5-self.player.y)
+        fx, fy = ATTACK_FORWARD[self.attack_facing]
+        if dx*fx + dy*fy > 0:
             self.guard_hp -= 1
             self.guard_alert_until=self.time+2.5
             self.message('수호자 타격' if self.guard_hp else '수호자 처치 · 추적 AI는 다음 단계')
@@ -499,6 +522,7 @@ class Game:
             self.start_shift()
             return
         self.time += dt
+        previous_attack_time = self.attack_time
         self.attack_time += dt
         if self.phase == 2:
             self.player.stamina = min(100, self.player.stamina+dt*8)
@@ -563,6 +587,9 @@ class Game:
                 self.player.sprint_now()
             else:
                 self.player.walk_now()
-        elif self.player.state in ('walk', 'sprint') or self.attack_time >= .75:
+        elif self.player.state in ('walk', 'sprint') or self.attack_time >= ATTACK_COOLDOWN:
             self.player.rest()
+        if (self.attack_facing and not self.map_open
+                and previous_attack_time < self.attack_hit_at <= self.attack_time):
+            self.hit_guard()
         self.update_visibility()
