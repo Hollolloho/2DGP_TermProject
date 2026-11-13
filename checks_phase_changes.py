@@ -176,19 +176,13 @@ def check_first_puzzle():
         assert game.state == 'explore'
         game.player.x, game.player.y = near[0]+.5, near[1]+.5
         game.update_visibility()
-        assert game.puzzle_available()
         game.interact()
-        assert game.state == 'explore'
-        game.enter_puzzle()
         assert game.state == 'puzzle'
         game.puzzle.press(start)
         game.drag_puzzle(corner)
         game.close_puzzle()
         assert game.puzzle.point == corner and not game.puzzle.dragging
-        assert game.puzzle_available()
         game.interact()
-        assert game.state == 'explore'
-        game.enter_puzzle()
         assert game.state == 'puzzle'
         position = game.player.x, game.player.y
         game.update(.05, 0, 2)
@@ -200,8 +194,7 @@ def check_first_puzzle():
         assert game.puzzle.point is None and game.puzzle_reserved_phase is None
         finish_shift(game)
         assert game.solid(*wall)
-        assert game.puzzle_available()
-        game.enter_puzzle()
+        game.interact()
         game.puzzle.press(start)
         for point in route:
             game.drag_puzzle(point)

@@ -535,6 +535,11 @@ class Game:
             self.attack_facing = self.attack_clip = None
             self.attack_hits_ms = ()
             self.escape()
+        elif self.puzzle_available():
+            self.attack_facing = self.attack_clip = None
+            self.attack_hits_ms = ()
+            self.player.rest()
+            self.enter_puzzle()
         self.update_visibility()
 
     def return_from_trap(self, completed=False):
