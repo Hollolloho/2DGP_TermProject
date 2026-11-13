@@ -122,6 +122,27 @@ def run(app):
             press(w, d, ticks=1)
             assert room.player.screen_facing == 'ne' and room.attack_facing == 'sw'
             assert app.view.player_frame(room) == clip['frames'][0]['rect']
+            view = app.view
+            walk_sw = room.player_clips['walk-sw']
+            phase = (-room.player.gait_phase) % 1
+            leg_index = int(phase*len(walk_sw['frames'])+1e-9) % len(walk_sw['frames'])
+            calls = []
+            image, effect = view.image, view.effect
+            old_scale, view.world_scale = view.world_scale, 1
+            room.player.torch = True
+            try:
+                view.image = lambda name, dst, src: calls.append((name, dst, src))
+                view.effect = lambda name, x, y, time, scale: calls.append((name, (x, y), None))
+                view.player(180, 140, room)
+                mount = clip['torch_mounts'][0]
+                assert calls == [
+                    ('torch', (148+mount[0], 86+mount[1]), None),
+                    ('moving-attack', (148, 86, 64, 64), walk_sw['leg_layer_rects'][leg_index]),
+                    ('moving-attack', (148, 86, 64, 64), clip['upper_layer_rects'][0]),
+                ]
+            finally:
+                room.player.torch = False
+                view.image, view.effect, view.world_scale = image, effect, old_scale
             hit = next(event for event in clip['events'] if event['name'] == 'hit')
             before_hit = hit['at_ms']/1000-room.attack_time-.001
             ticks = ceil(before_hit/.05)
@@ -134,7 +155,7 @@ def run(app):
             press(p.SDLK_r)
             assert app.game is not room and app.game.attack_facing is None and app.game.attack_clip is None
             assert app.game.guard_hp == 3
-            print('PASS: SDL SW attack keeps its clip while moving NE, hits on the clip event and resets on R.')
+            print('PASS: SDL NE movement during SW attack keeps SW upper body and torch, reverses SW gait, hits on event and resets on R.')
         finally:
             app.game = g
             app.held.clear()

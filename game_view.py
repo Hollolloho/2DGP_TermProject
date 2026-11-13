@@ -6,7 +6,7 @@ from pathlib import Path
 import pico2d.pico2d as p
 from maze_model import BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS, COLS, ROWS, PHASES, TRAP_LENGTH
 from maze_model import PHASE_SECONDS, SHIFT_SECONDS, SHIFT_SWAP_AT
-from maze_model import HALF_TILE_W, HALF_TILE_H, project
+from maze_model import ATTACK_FORWARD, HALF_TILE_W, HALF_TILE_H, project
 from trap_view import Corridor
 
 LW, LH, SCALE = 640, 400, 2
@@ -32,6 +32,8 @@ class View:
         directions = self.player_catalog['world_direction_to_screen']
         self.facing = tuple(directions[name] for name in ('down', 'left', 'right', 'up'))
         self.images['player'] = self.load(player/self.player_catalog['image'], pixel=True)
+        if layer_image := self.player_catalog.get('moving_attack_image'):
+            self.images['moving-attack'] = self.load(player/layer_image, pixel=True)
         for name, folder in (('terrain', 'terrain_v1'), ('props', 'props_v1'),
                              ('guardian', 'guardian_v1'), ('shortcuts', 'shortcuts_v1')):
             directory = Path('sprite/quarter')/folder
@@ -196,11 +198,38 @@ class View:
             self.image('dagger-slash', dagger[1], dagger[2])
         if torch and not torch_in_front:
             self.effect('torch', *torch)
-        self.image('player', (left, top, frame[2]*scale, frame[3]*scale), frame)
+        movement = {'walk': 'walk', 'sprint': 'run'}.get(game.player.state)
+        destination = (left, top, frame[2]*scale, frame[3]*scale)
+        if movement and 'upper_layer_rects' in clip:
+            legs = self.moving_attack_legs(game, movement, clip['direction'])
+            self.image('moving-attack', destination, legs)
+            self.image('moving-attack', destination, clip['upper_layer_rects'][index])
+        else:
+            self.image('player', destination, frame)
         if torch and torch_in_front:
             self.effect('torch', *torch)
         if dagger and dagger[0] == 'front':
             self.image('dagger-slash', dagger[1], dagger[2])
+
+    def moving_attack_legs(self, game, state, facing):
+        # Keep the view of the legs aligned to the locked upper body. Backward
+        # movement plays the same distance-based stride in reverse.
+        clips = self.player_catalog['clips']
+        name = state+'-'+facing
+        if name not in clips:
+            # Cardinal sprints use diagonal sprites in normal play. During a
+            # cardinal attack use the matching walk legs to keep both views aligned.
+            name = 'walk-'+facing
+        clip = clips[name]
+        frames = clip['leg_layer_rects']
+        ax, ay = ATTACK_FORWARD[facing]
+        mx, my = ATTACK_FORWARD.get(game.player.screen_facing, (ax, ay))
+        phase = game.player.gait_phase
+        # Undo the screen's 2:1 ground projection before testing direction.
+        if ax*mx/HALF_TILE_W**2 + ay*my/HALF_TILE_H**2 < 0:
+            phase = (-phase) % 1
+        index = int(phase*len(frames)+1e-9) + clip.get('phase_offset_frames', int(name == 'walk-nw'))
+        return frames[index % len(frames)]
 
     def guardian(self, x, y, game, tint):
         self.atlas(x, y, 'guardian', 'idle_'+self.facing[game.guard_direction], tint)
