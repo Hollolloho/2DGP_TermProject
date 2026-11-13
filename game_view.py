@@ -10,6 +10,7 @@ from maze_model import BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS, COLS, ROWS, PHASES
 from maze_model import PHASE_SECONDS, SHIFT_SECONDS, SHIFT_SWAP_AT
 from maze_model import ATTACK_FORWARD, DEFAULT_ATTACK_HIT_MS, HALF_TILE_W, HALF_TILE_H, project
 from trap_view import Corridor
+from mouse_maze import MAZE, cell_rect
 
 LW, LH, SCALE = 640, 400, 2
 MAP_RECT = (8, 32, 496, 368)
@@ -396,6 +397,8 @@ class View:
         def place(draw, x, y, *args):
             scene.append((x+y, draw, (*self.world(x, y), *args)))
 
+        gate = game.puzzle_gate
+        gate_cell = gate[0] if gate else None
         for x, y in drawn_cells:
             sx, sy = self.world(x+.5, y+.5)
             if not (left-32 <= sx <= left+width+32 and top-16 <= sy <= top+height+80):
@@ -403,6 +406,13 @@ class View:
             tint, brightness = self.terrain_light(game, x, y)
             variant = (x*3+y*5+game.seed) % 4
             self.terrain(sx, sy, f'floor_{variant}', tint, brightness)
+            if (x, y) == gate_cell:
+                _, near, _ = gate
+                facing = {(0, 1): 'south', (1, 0): 'east', (0, -1): 'north', (-1, 0): 'west'}
+                direction = facing[near[0]-x, near[1]-y]
+                state = 'open' if game.puzzle_open else 'closed'
+                place(self.atlas, x+.5, y+.5, 'shortcuts', f'puzzle_{state}_{direction}', tint)
+                continue
             if game.grid[y][x]:
                 mask = self.wall_mask(game, x, y)
                 place(self.shifting_wall, x+.5, y+.5, f'wall_{mask}', tint, brightness, (x, y), game)
@@ -421,6 +431,11 @@ class View:
                   self.tile_tint(game, x, y), game)
 
         markers = []
+        if gate and (gate_cell in game.visible or game.reveal_all):
+            x, y = gate[1]
+            sx, sy = self.world(x+.5, y+.5)
+            color = (127,197,183) if game.puzzle_open else (218,175,107)
+            markers.append(('P', sx-12*self.world_scale, sy, color))
         for cell, arrival in ((game.trap_cell, False), (game.trap_exit, True)):
             if cell not in game.visible and not game.reveal_all:
                 continue
@@ -495,16 +510,64 @@ class View:
         self.text('횃불: 획득' if game.player.torch else '횃불: 미획득',523,187,(217,185,111))
         if game.state=='trap':
             lines=['W / S  전진·후진','A / D  칼날 회피','Esc  입장 전 복귀',f'진행 {int(game.trap_progress*100)}%']
+        elif game.state == 'puzzle':
+            lines = ['좌클릭 드래그', '버튼 놓기  중단', '마지막 점에서 재개',
+                     'Esc  퍼즐 닫기', '세계 시간은 계속 진행']
         else:
             lines=['WASD  화면 상하좌우','두 키 조합  대각선','Shift  달리기','좌클릭  검 공격','F  상호작용','M  방문 지도','V  시야 / 전체 보기','R  새 회차','F10  화면 저장','Esc  창 닫기']
         for i,line in enumerate(lines):
             self.text(line,523,215+i*16,(175,183,175))
+        if game.puzzle_gate:
+            if game.puzzle_open:
+                self.text('퍼즐 통로 개방됨',523,371,(127,197,183))
+            elif game.puzzle_reserved_phase is not None:
+                self.text(f'다음 {PHASES[game.puzzle_reserved_phase]} 개방 예정',523,371,(225,193,118))
+            elif game.puzzle_available() and game.state == 'explore' and not game.map_open:
+                self.text('F  마우스 미로',523,371,(225,193,118))
         if game.reveal_all and game.state=='explore':
             self.text('전체 보기 · 디자인 확인용',12,44,(219,190,123))
         if game.time < game.banner_until:
             self.rectangle(10,371,490,23,(10,14,17,230))
             self.text(game.banner,19,383,(225,208,164),size='font')
         self.text(f'{fps:.0f} FPS',574,387,(106,120,119))
+
+    def puzzle_overlay(self, game):
+        self.rectangle(16, 37, 488, 326, (12, 18, 22, 248))
+        self.text('마우스 미로', 66, 63, size='title')
+        self.text('출발점을 누른 채 도착점까지 · Esc 닫기', 66, 89, size='font')
+        self.text('버튼을 놓으면 마지막 점에서 이어서 풀 수 있습니다.', 66, 111)
+        for y, row in enumerate(MAZE):
+            for x, tile in enumerate(row):
+                left, top, width, height = cell_rect(x, y)
+                color = {'#': (63, 73, 76), '.': (27, 37, 43),
+                         'S': (46, 100, 89), 'G': (117, 89, 53)}[tile]
+                self.rectangle(left, top, width, height, color)
+                if tile in 'SG':
+                    self.text('출발' if tile == 'S' else '도착', left+5, top+20)
+        if game.puzzle.point is not None:
+            x, y = game.puzzle.point
+            self.rectangle(x-3, y-3, 7, 7, (250, 228, 155))
+        if game.puzzle.hit_wall:
+            self.text('벽에 닿았습니다 · 출발점에서 다시 시작', 66, 326, (235, 162, 123), size='font')
+        else:
+            self.text('완료하면 다음 시간대에 문이 열립니다.', 66, 326, size='font')
+
+        wall, near, far = game.puzzle_gate
+        wx, wy = wall
+        for index, (title, grid) in enumerate((
+            ('현재', game.grid),
+            (f'{PHASES[game.next_phase]} 개방 후', game.maze_layouts.grids[game.next_phase]),
+        )):
+            top = 154 + index*88
+            self.text(title, 394, top-11)
+            for y in range(wy-1, wy+2):
+                for x in range(wx-1, wx+2):
+                    color = (66, 75, 78) if grid[y][x] else (28, 39, 45)
+                    if (x, y) in (near, far):
+                        color = (53, 108, 99)
+                    if (x, y) == wall:
+                        color = (61, 150, 132) if index else (162, 118, 65)
+                    self.rectangle(394+(x-wx+1)*20, top+(y-wy+1)*20, 19, 19, color)
 
     def map_overlay(self, game):
         self.rectangle(0,0,640,400,(5,10,14,244))
@@ -536,6 +599,8 @@ class View:
         self.hud_trap(game) if game.state=='trap' else self.hud(game,fps)
         if game.map_open and game.state=='explore':
             self.map_overlay(game)
+        if game.state == 'puzzle':
+            self.puzzle_overlay(game)
         if game.state=='clear':
             self.rectangle(0,0,LW,LH,(0,0,0,240))
             self.text('CLEAR',225,180,(226,213,171),size='big')
@@ -545,7 +610,7 @@ class View:
             self.text('실패',275,180,(218,126,109),size='big')
             self.text('체력이 0이 됐습니다 · R 새 회차',230,236,size='font')
         # 탐색↔변형에는 전체 암전을 넣지 않아 벽 연출과 고정 HUD가 보이게 한다.
-        display_mode = 'explore' if game.state == 'shifting' else game.state
+        display_mode = 'explore' if game.state in ('shifting', 'puzzle') else game.state
         if self.mode_game is not game or self.last_mode != display_mode:
             self.mode_game = game
             self.last_mode, self.mode_changed = display_mode, game.ui_time

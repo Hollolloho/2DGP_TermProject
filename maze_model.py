@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import math
 import random
 from transitions import Machine
+from mouse_maze import MouseMaze
 
 COLS, ROWS = 31, 23
 # 쿼터뷰 지면의 반쪽 타일 크기. 렌더링과 이동 속도 계산이 같은 투영을 사용한다.
@@ -260,6 +261,10 @@ class Game:
             'fountain': self.fountain, 'guardian': self.guard,
         }
         self.maze_layouts = MazeLayouts(self.grid, seed, landmarks)
+        self.puzzle_gate = self.choose_puzzle_gate()
+        self.puzzle = MouseMaze()
+        self.puzzle_reserved_phase = None
+        self.puzzle_open = False
         self.phase = self.layout_phase = run_number % 3
         self.grid = self.maze_layouts.copy_for_phase(self.phase)
         self.path = shortest_path(self.grid, self.spawn, self.exit)
@@ -295,10 +300,11 @@ class Game:
         self.trap_return_direction = self.player.direction
         self.trap_velocity = self.trap_side_velocity = self.trap_stride = 0.0
         self.trap_hit_at = -10.0
-        self.machine = Machine(model=self, states=['explore', 'trap', 'shifting', 'clear', 'failed'],
+        self.machine = Machine(model=self, states=['explore', 'puzzle', 'trap', 'shifting', 'clear', 'failed'],
             initial='explore', auto_transitions=False,
             transitions=[['enter_room', 'explore', 'trap'], ['leave_room', 'trap', 'explore'],
                          ['escape', 'explore', 'clear'], ['fail', 'trap', 'failed'],
+                         ['enter_puzzle', 'explore', 'puzzle'], ['leave_puzzle', 'puzzle', 'explore'],
                          ['begin_transform', 'explore', 'shifting'],
                          ['finish_transform', 'shifting', 'explore']])
         self.player_machine = Machine(model=self.player, states=['idle', 'walk', 'sprint', 'attack'],
@@ -306,6 +312,63 @@ class Game:
             transitions=[['rest', '*', 'idle'], ['walk_now', '*', 'walk'],
                          ['sprint_now', '*', 'sprint'], ['swing', '*', 'attack']])
         self.update_visibility()
+
+    def choose_puzzle_gate(self):
+        layouts = self.maze_layouts
+        protected = layouts.protected_cells | {self.torch_wall}
+
+        def valid(wall, near, far):
+            x, y = wall
+            if wall in protected or near in protected or far in protected:
+                return False
+            for grid in layouts.grids:
+                if not grid[y][x] or grid[near[1]][near[0]] or grid[far[1]][far[0]]:
+                    return False
+                opened = [row[:] for row in grid]
+                opened[y][x] = 0
+                if not layouts.is_valid(opened):
+                    return False
+            return True
+
+        preferred = ((17, 6), (17, 5), (17, 7))
+        if self.seed == 117 and valid(*preferred):
+            return preferred
+        for y in range(1, ROWS-1):
+            for x in range(1, COLS-1):
+                wall = (x, y)
+                for near, far in (((x-1, y), (x+1, y)), ((x, y-1), (x, y+1))):
+                    if valid(wall, near, far):
+                        return wall, near, far
+        return None
+
+    @property
+    def next_phase(self):
+        return (self.phase+1) % len(PHASES)
+
+    def puzzle_available(self):
+        return (self.puzzle_gate is not None and not self.puzzle_open
+                and self.puzzle_reserved_phase is None
+                and self.puzzle_gate[0] in self.visible and self.close_to(self.puzzle_gate[1], .75))
+
+    def close_puzzle(self):
+        if self.state == 'puzzle':
+            self.puzzle.dragging = False
+            self.leave_puzzle()
+
+    def drag_puzzle(self, point):
+        if self.state != 'puzzle' or not self.puzzle.move(point):
+            return
+        self.puzzle_reserved_phase = self.next_phase
+        self.puzzle.reset()
+        self.close_puzzle()
+        self.message(f'퍼즐 완료 · 다음 {PHASES[self.next_phase]}에 통로가 열립니다', 5)
+
+    def layout_for_phase(self, phase):
+        grid = self.maze_layouts.copy_for_phase(phase)
+        if self.puzzle_gate and (self.puzzle_open or self.puzzle_reserved_phase == phase):
+            x, y = self.puzzle_gate[0]
+            grid[y][x] = 0
+        return grid
 
     def message(self, text, seconds=3):
         self.banner, self.banner_until = text, self.time+seconds
@@ -367,7 +430,8 @@ class Game:
         start = math.floor(player.x), math.floor(player.y)
         # distances는 가까운 순서의 BFS다. 벽 너머 칸으로 바로 밀어내지 않는다.
         for x, y in distances(self.grid, start):
-            if all(self.can_stand(x+.5, y+.5, grid) for grid in self.maze_layouts.grids):
+            if (self.can_stand(x+.5, y+.5, next_grid) and
+                    all(self.can_stand(x+.5, y+.5, grid) for grid in self.maze_layouts.grids)):
                 return x+.5, y+.5
         raise RuntimeError('변형 후 복귀할 공통 통로가 없습니다.')
 
@@ -375,7 +439,9 @@ class Game:
         """시간대 경계에서 함정방을 빠져나오고 변형 상태에 들어간다."""
         if self.state == 'trap':
             self.return_from_trap()
-        next_grid = self.maze_layouts.grids[(self.phase+1) % len(PHASES)]
+        self.close_puzzle()
+        self.puzzle.reset()
+        next_grid = self.layout_for_phase(self.next_phase)
         self.shift_cells = {(x, y) for y in range(ROWS) for x in range(COLS)
                             if self.grid[y][x] != next_grid[y][x]}
         self.shift_elapsed = 0.0
@@ -385,8 +451,11 @@ class Game:
 
     def apply_next_layout(self):
         """중간 시점에 좌표·지형·충돌·관찰 기록을 한 번에 교체한다."""
-        next_phase = (self.phase+1) % len(PHASES)
-        next_grid = self.maze_layouts.copy_for_phase(next_phase)
+        next_phase = self.next_phase
+        next_grid = self.layout_for_phase(next_phase)
+        if self.puzzle_reserved_phase == next_phase:
+            self.puzzle_open = True
+            self.puzzle_reserved_phase = None
         self.player.x, self.player.y = self.safe_position(next_grid)
         self.grid = next_grid
         self.phase = self.layout_phase = next_phase
@@ -466,6 +535,11 @@ class Game:
             self.attack_facing = self.attack_clip = None
             self.attack_hits_ms = ()
             self.escape()
+        elif self.puzzle_available():
+            self.attack_facing = self.attack_clip = None
+            self.attack_hits_ms = ()
+            self.player.rest()
+            self.enter_puzzle()
         self.update_visibility()
 
     def return_from_trap(self, completed=False):
@@ -529,6 +603,8 @@ class Game:
         self.attack_time += dt
         if self.phase == 2:
             self.player.stamina = min(100, self.player.stamina+dt*8)
+        if self.state == 'puzzle':
+            return
         if self.state == 'trap':
             running = sprint and self.player.stamina>0
             target_speed = -dy*(2.7 if running else 1.8)

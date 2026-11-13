@@ -2,7 +2,7 @@
 import json
 import math
 from pathlib import Path
-from checks_phase_changes import check_phase_changes, finish_shift
+from checks_phase_changes import check_first_puzzle, check_phase_changes, finish_shift
 from checks_gait import SCHEDULES, check_gait
 from maze_model import WALK_SPEED, project as project_ground
 from maze_model import Game, COLS, ROWS, DIRECTIONS, distances, TRAP_LENGTH, TRAP_PLANES, TRAP_LATERAL, BLADE_RADIUS, PLAYER_RADIUS, blade_position
@@ -132,6 +132,7 @@ def check_dagger():
 def run():
     check_gait()
     check_phase_changes()
+    check_first_puzzle()
     check_visibility()
     check_dagger()
     for seed in range(32):

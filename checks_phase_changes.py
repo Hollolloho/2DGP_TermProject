@@ -2,6 +2,7 @@
 import math
 from maze_model import (Game, COLS, ROWS, DIRECTIONS, PHASE_SECONDS,
                         PHASE_WARNING_SECONDS, SHIFT_SWAP_AT, distances)
+from mouse_maze import BOARD, MouseMaze
 
 
 def finish_shift(game):
@@ -23,6 +24,7 @@ def check_phase_changes():
         for run in range(3):
             game = Game(seed, run)
             layouts = game.maze_layouts
+            assert game.puzzle_gate is not None, (seed, run)
             assert game.phase == game.layout_phase == run
             assert game.grid == layouts.grids[run] and game.grid is not layouts.grids[run]
             copied = layouts.copy_for_phase(run)
@@ -143,5 +145,87 @@ def check_phase_changes():
     print('PASS: 96 starts, 288 layouts, 480 transitions; routes, one swap, frozen world, safe relocation, exact trap return, phase maps and resources.')
 
 
+def check_first_puzzle():
+    left, top, size = BOARD
+    center = lambda x, y: (left+(x+.5)*size, top+(y+.5)*size)
+    start, corner, goal = center(1, 1), center(3, 1), center(7, 1)
+    route = (corner, center(3, 3), center(5, 3), center(5, 1), goal)
+    maze = MouseMaze()
+    maze.press(start)
+    assert not maze.move(goal) and maze.hit_wall and maze.point is None
+    maze.press(start)
+    assert not maze.move((left, start[1])) and maze.hit_wall and maze.point is None
+    maze.press(start)
+    assert not maze.move((corner[0]+size/2, corner[1])) and maze.hit_wall
+    maze.press(start)
+    assert not maze.move(corner)
+    maze.dragging = False
+    assert not maze.move(route[1]) and maze.point == corner
+    maze.press(goal)
+    assert not maze.dragging
+    maze.press(corner)
+    for point in route[1:-1]:
+        assert not maze.move(point)
+    assert maze.move(goal)
+
+    for run in range(3):
+        game = Game(117, run)
+        wall, near, far = game.puzzle_gate
+        assert (wall, near, far) == ((17, 6), (17, 5), (17, 7))
+        game.interact()
+        assert game.state == 'explore'
+        game.player.x, game.player.y = near[0]+.5, near[1]+.5
+        game.update_visibility()
+        game.interact()
+        assert game.state == 'puzzle'
+        game.puzzle.press(start)
+        game.drag_puzzle(corner)
+        game.close_puzzle()
+        assert game.puzzle.point == corner and not game.puzzle.dragging
+        game.interact()
+        assert game.state == 'puzzle'
+        position = game.player.x, game.player.y
+        game.update(.05, 0, 2)
+        game.attack()
+        assert (game.player.x, game.player.y) == position and game.phase_time > 0
+        assert not game.attack_hits_ms and game.player.hp == 100
+        start_shift(game)
+        game.drag_puzzle(goal)
+        assert game.puzzle.point is None and game.puzzle_reserved_phase is None
+        finish_shift(game)
+        assert game.solid(*wall)
+        game.interact()
+        game.puzzle.press(start)
+        for point in route:
+            game.drag_puzzle(point)
+        reserved = (game.phase+1) % 3
+        assert game.state == 'explore' and game.puzzle_reserved_phase == reserved and game.solid(*wall)
+        game.interact()
+        assert game.state == 'explore'
+        start_shift(game)
+        assert wall in game.shift_cells and game.solid(*wall)
+        while not game.shift_applied:
+            game.update(.05)
+        assert game.phase == reserved and game.puzzle_open and game.puzzle_reserved_phase is None
+        assert not game.solid(*wall) and game.maze_layouts.is_valid(game.grid)
+        finish_shift(game)
+        for _ in range(32):
+            game.update(.025, 0, 1)
+        assert math.isclose(game.player.y, far[1]+.5, abs_tol=1e-8)
+        for _ in range(16):
+            game.update(.025, 0, -1)
+        on_gate = game.player.x, game.player.y
+        assert (int(on_gate[0]), int(on_gate[1])) == wall
+        for _ in range(3):
+            start_shift(game)
+            finish_shift(game)
+            assert not game.solid(*wall) and (game.player.x, game.player.y) == on_gate
+        fresh = Game(game.seed, run+1)
+        assert fresh.solid(*fresh.puzzle_gate[0]) and not fresh.puzzle_open
+        assert all(grid[wall[1]][wall[0]] for grid in game.maze_layouts.grids)
+    print('PASS: mouse sweep, corner, bounds, pause/resume, phase cancellation, delayed opening and traversal across all phases.')
+
+
 if __name__ == '__main__':
     check_phase_changes()
+    check_first_puzzle()

@@ -9,6 +9,7 @@ from maze_model import PHASE_SECONDS, PHASE_WARNING_SECONDS, SHIFT_SWAP_AT
 from maze_model import WALK_SPEED, RUN_SPEED, PLAYER_HALF_SIZE
 from game_view import LW, LH, SCALE, project
 from trap_view import project as project_trap
+from mouse_maze import BOARD
 
 
 def inject_key(key, down=True):
@@ -17,6 +18,19 @@ def inject_key(key, down=True):
     event.key.keysym.sym=key
     event.key.repeat=0
     assert p.SDL_PushEvent(event)==1
+
+
+def inject_mouse(event_type, point, held=True):
+    event = p.SDL_Event()
+    event.type = event_type
+    x, y = (round(coord*SCALE) for coord in point)
+    if event_type == p.SDL_MOUSEMOTION:
+        event.motion.x, event.motion.y = x, y
+        event.motion.state = p.SDL_BUTTON_LMASK if held else 0
+    else:
+        event.button.x, event.button.y = x, y
+        event.button.button = p.SDL_BUTTON_LEFT
+    assert p.SDL_PushEvent(event) == 1
 
 
 def run(app):
@@ -58,6 +72,81 @@ def run(app):
         event.button.button = p.SDL_BUTTON_LEFT
         assert p.SDL_PushEvent(event) == 1
         app.handle_events()
+
+    def check_puzzle_input():
+        room = Game(117, player_clips=app.view.player_catalog['clips'])
+        app.game = room
+        wall, near, far = room.puzzle_gate
+        room.player.x, room.player.y = near[0]+.5, near[1]+.5
+        room.update_visibility()
+        left, top, size = BOARD
+        center = lambda x, y: (left+(x+.5)*size, top+(y+.5)*size)
+        start, corner, goal = center(1, 1), center(3, 1), center(7, 1)
+        down, motion, up = p.SDL_MOUSEBUTTONDOWN, p.SDL_MOUSEMOTION, p.SDL_MOUSEBUTTONUP
+
+        def mouse(kind, point, held=True):
+            inject_mouse(kind, point, held)
+            app.handle_events()
+
+        try:
+            press(p.SDLK_f)
+            assert room.state == 'puzzle'
+            app.view.draw(room)
+            press(ticks=12)
+            app.view.draw(room)
+            app.view.capture(output/'puzzle-preview.png')
+            press(w, p.SDLK_m, ticks=4)
+            assert room.phase_time > 0 and not room.map_open and not app.held
+            mouse(down, start)
+            mouse(motion, goal)
+            assert room.puzzle.hit_wall and room.player.hp == 100
+            mouse(up, goal)
+            mouse(down, start)
+            mouse(motion, corner)
+            mouse(up, goal)
+            mouse(motion, center(3, 3), False)
+            assert room.puzzle.point == corner and not room.puzzle.dragging
+            mouse(down, corner)
+            lost = p.SDL_Event()
+            lost.type = p.SDL_WINDOWEVENT
+            lost.window.event = p.SDL_WINDOWEVENT_FOCUS_LOST
+            assert p.SDL_PushEvent(lost) == 1
+            app.handle_events()
+            mouse(motion, center(3, 3))
+            assert room.puzzle.point == corner and not room.puzzle.dragging
+            mouse(up, corner)
+            press(p.SDLK_ESCAPE)
+            assert app.running and room.state == 'explore' and room.puzzle.point == corner
+            press(p.SDLK_f)
+            mouse(down, corner)
+            for point in (center(3, 3), center(5, 3), center(5, 1), goal):
+                mouse(motion, point)
+            assert room.state == 'explore' and room.puzzle_reserved_phase == 1 and room.solid(*wall)
+            mouse(down, goal)  # A duplicate down before release must not become an attack.
+            assert not room.attack_hits_ms
+            mouse(up, goal)
+            room.phase_time = PHASE_SECONDS-.01
+            app.update(.02)
+            assert room.state == 'shifting' and room.solid(*wall)
+            while room.state == 'shifting':
+                app.update(.05)
+            assert room.puzzle_open and not room.solid(*wall)
+            app.view.draw(room)
+            assert app.view.light_revision == room.layout_revision
+            app.view.capture(output/'puzzle-open.png')
+            walk_tile(s, a)
+            assert (int(room.player.x), int(room.player.y)) == wall
+            walk_tile(s, a)
+            assert (int(room.player.x), int(room.player.y)) == far
+            press(p.SDLK_r)
+            fresh = app.game
+            assert fresh.run_number == 1 and fresh.solid(*fresh.puzzle_gate[0])
+            assert not fresh.puzzle_open and fresh.puzzle_reserved_phase is None
+            print('PASS: SDL mouse maze input, focus/release/resume, reservation, drawn opening, traversal and R reset.')
+        finally:
+            app.game = g
+            app.held.clear()
+            app.puzzle_mouse_held = False
 
     def check_dagger_timeline(room):
         view = app.view
@@ -631,6 +720,7 @@ def run(app):
     snapshot('01-directional-view.png')
     check_controls()
     check_attack_render()
+    check_puzzle_input()
     from checks_gait import check_gait_view
     check_gait_view(app.view)
     app.view.draw(g)
