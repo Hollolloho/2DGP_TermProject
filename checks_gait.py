@@ -153,7 +153,6 @@ def check_clip_metadata():
     # player_frame은 SDL 리소스를 사용하지 않아 플레이 창 없이 실제 선택 함수를 검사한다.
     view = View.__new__(View)
     view.player_catalog, view.facing = {'clips': clips}, DIAGONAL_FACINGS
-    view.animated_player, view.animation_state, view.animation_started = None, None, 0.
     for running in (False, True):
         state = 'run' if running else 'walk'
         speed = RUN_SPEED if running else WALK_SPEED
@@ -266,20 +265,23 @@ def check_gait_view(view):
             view.draw(game)
             assert gait(player) == saved
 
-    # 정지 애니메이션·공격은 기존 시간 리듬을 계속 사용한다.
+    # 대기 자세는 모든 방향에서 고정되고 공격 프레임만 시간에 따라 진행한다.
     game.update(.025)
     assert player.state == 'idle'
-    initial = view.player_frame(game)
-    idle = view.player_catalog['clips'][game.locomotion_clip_name('idle')]
-    for _ in range(math.ceil(idle['durations_ms'][0]/50)+1):
-        game.update(.05)
-    assert view.player_frame(game) != initial and gait(player) == saved
+    for facing in ('n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'):
+        player.screen_facing = facing
+        idle = view.player_catalog['clips']['idle-'+facing]
+        expected = idle['frames'][idle.get('still_frame', 0)]['rect']
+        for _ in range(21):
+            assert view.player_frame(game) == expected
+            game.update(.05)
+    assert gait(player) == saved
     game.attack()
     attack_start = view.player_frame(game)
     for _ in range(3):
         game.update(.05)
     assert view.player_frame(game) != attack_start and gait(player) == saved
-    print('PASS: actual SDL draw frequency 0/1/2 per update preserves gait and frame across all dt schedules; camera/zoom, clip changes, timed idle and attack.')
+    print('PASS: actual SDL draw frequency 0/1/2 per update preserves gait; 8 idle poses stay still and attack frames advance.')
 
 
 if __name__ == '__main__':

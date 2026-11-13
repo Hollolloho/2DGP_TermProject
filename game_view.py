@@ -6,7 +6,7 @@ from pathlib import Path
 import pico2d.pico2d as p
 from maze_model import BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS, COLS, ROWS, PHASES, TRAP_LENGTH
 from maze_model import PHASE_SECONDS, SHIFT_SECONDS, SHIFT_SWAP_AT
-from maze_model import HALF_TILE_W, HALF_TILE_H, project
+from maze_model import ATTACK_FORWARD, HALF_TILE_W, HALF_TILE_H, project
 from trap_view import Corridor
 
 LW, LH, SCALE = 640, 400, 2
@@ -32,6 +32,8 @@ class View:
         directions = self.player_catalog['world_direction_to_screen']
         self.facing = tuple(directions[name] for name in ('down', 'left', 'right', 'up'))
         self.images['player'] = self.load(player/self.player_catalog['image'], pixel=True)
+        if layer_image := self.player_catalog.get('moving_attack_image'):
+            self.images['moving-attack'] = self.load(player/layer_image, pixel=True)
         for name, folder in (('terrain', 'terrain_v1'), ('props', 'props_v1'),
                              ('guardian', 'guardian_v1'), ('shortcuts', 'shortcuts_v1')):
             directory = Path('sprite/quarter')/folder
@@ -52,7 +54,6 @@ class View:
         self.light_game, self.light_time, self.torch_light = None, 0., 0.
         self.discovery, self.exposure = {}, {}
         self.light_revision = -1
-        self.animated_player, self.animation_state, self.animation_started = None, None, 0
         self.last_mode, self.mode_changed = None, -10
         self.mode_game = None
 
@@ -129,34 +130,38 @@ class View:
         image.draw(x+image.w/2,LH-y)
 
     def player_frame(self, game):
-        player = game.player
+        clip, index = self.player_pose(game)
+        return clip['frames'][index]['rect']
+
+    def player_pose(self, game):
         clips = self.player_catalog['clips']
         attack = clips.get(game.attack_clip)
         attack_ms = game.attack_time*1000
-        if attack is not None and attack_ms < sum(attack['durations_ms']):
-            clip, elapsed_ms = attack, attack_ms
-        else:
-            state = {'walk': 'walk', 'sprint': 'run'}.get(player.state, 'idle')
-            if player is not self.animated_player or state != self.animation_state:
-                self.animated_player, self.animation_state = player, state
-                self.animation_started = game.time
-            name = game.locomotion_clip_name(state)
-            clip = clips[name]
-            if state in ('walk', 'run'):
-                # 거리 위상만 읽는다. 렌더 횟수·시간·카메라·확대는 보행을 진행시키지 않는다.
-                # 공통 접지 위상 0에 맞는 프레임 오프셋을 더한다. 구 NW 걷기만 기본 1이다.
-                offset = clip.get('phase_offset_frames', 1 if name == 'walk-nw' else 0)
-                index = int(player.gait_phase*len(clip['frames'])+1e-9)
-                return clip['frames'][(index+offset) % len(clip['frames'])]['rect']
-            elapsed_ms = (game.time-self.animation_started)*1000
-        durations = clip['durations_ms']
-        if clip['loop']:
-            elapsed_ms %= sum(durations)
-        for frame, duration in zip(clip['frames'], durations):
-            if elapsed_ms < duration:
-                return frame['rect']
-            elapsed_ms -= duration
-        return clip['frames'][-1]['rect']
+        if attack is not None:
+            durations = attack['durations_ms']
+            if attack_ms < sum(durations):
+                if attack['loop']:
+                    attack_ms %= sum(durations)
+                for index, duration in enumerate(durations):
+                    if attack_ms < duration:
+                        return attack, index
+                    attack_ms -= duration
+                return attack, len(attack['frames']) - 1
+
+        state = {'walk': 'walk', 'sprint': 'run'}.get(game.player.state, 'idle')
+        return self.locomotion_pose(game, state)
+
+    def locomotion_pose(self, game, state):
+        name = game.locomotion_clip_name(state)
+        clip = self.player_catalog['clips'][name]
+        if state == 'idle':
+            return clip, clip.get('still_frame', 0)
+
+        # 거리 위상과 클립별 접지 오프셋으로 보행 프레임을 선택한다.
+        offset = clip.get('phase_offset_frames', int(name == 'walk-nw'))
+        count = len(clip['frames'])
+        index = int(game.player.gait_phase*count+1e-9)
+        return clip, (index+offset) % count
 
     def dagger_frame(self, game, x, y):
         fx = self.dagger_fx
@@ -177,16 +182,54 @@ class View:
 
     def player(self, x, y, game):
         scale = self.world_scale
-        frame = self.player_frame(game)
+        clip, index = self.player_pose(game)
+        frame = clip['frames'][index]['rect']
         px, py = self.player_catalog['pivot']
+        left, top = x-px*scale, y-py*scale
+        mounts = clip.get('torch_mounts') if game.player.torch else None
+        torch = None
+        if mounts:
+            ax, ay = mounts[index]
+            torch = (left+ax*scale, top+ay*scale, game.time, .22*scale)
+        torch_in_front = clip.get('direction') in ('n', 'ne', 'e', 'nw')
+
         dagger = self.dagger_frame(game, x, y)
         if dagger and dagger[0] == 'back':
             self.image('dagger-slash', dagger[1], dagger[2])
-        self.image('player', (x-px*scale, y-py*scale, frame[2]*scale, frame[3]*scale), frame)
-        if game.player.torch:
-            self.effect('torch', x-8*scale, y-23*scale, game.time, .22*scale)
+        if torch and not torch_in_front:
+            self.effect('torch', *torch)
+        movement = {'walk': 'walk', 'sprint': 'run'}.get(game.player.state)
+        destination = (left, top, frame[2]*scale, frame[3]*scale)
+        if movement and 'upper_layer_rects' in clip:
+            legs = self.moving_attack_legs(game, movement, clip['direction'])
+            self.image('moving-attack', destination, legs)
+            self.image('moving-attack', destination, clip['upper_layer_rects'][index])
+        else:
+            self.image('player', destination, frame)
+        if torch and torch_in_front:
+            self.effect('torch', *torch)
         if dagger and dagger[0] == 'front':
             self.image('dagger-slash', dagger[1], dagger[2])
+
+    def moving_attack_legs(self, game, state, facing):
+        # Keep the view of the legs aligned to the locked upper body. Backward
+        # movement plays the same distance-based stride in reverse.
+        clips = self.player_catalog['clips']
+        name = state+'-'+facing
+        if name not in clips:
+            # Cardinal sprints use diagonal sprites in normal play. During a
+            # cardinal attack use the matching walk legs to keep both views aligned.
+            name = 'walk-'+facing
+        clip = clips[name]
+        frames = clip['leg_layer_rects']
+        ax, ay = ATTACK_FORWARD[facing]
+        mx, my = ATTACK_FORWARD.get(game.player.screen_facing, (ax, ay))
+        phase = game.player.gait_phase
+        # Undo the screen's 2:1 ground projection before testing direction.
+        if ax*mx/HALF_TILE_W**2 + ay*my/HALF_TILE_H**2 < 0:
+            phase = (-phase) % 1
+        index = int(phase*len(frames)+1e-9) + clip.get('phase_offset_frames', int(name == 'walk-nw'))
+        return frames[index % len(frames)]
 
     def guardian(self, x, y, game, tint):
         self.atlas(x, y, 'guardian', 'idle_'+self.facing[game.guard_direction], tint)

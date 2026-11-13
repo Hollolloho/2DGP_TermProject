@@ -79,6 +79,7 @@ def run(require_complete=False):
     player_dir = ROOT/'sprite/quarter/player_explorer_v1'
     player = json.loads((player_dir/'explorer.json').read_text(encoding='utf-8'))
     size = png_size(player_dir/player['image'])
+    layer_size = png_size(player_dir/player['moving_attack_image'])
     for state in ('idle', 'walk', 'run', 'hurt'):
         for direction in DIRECTIONS:
             assert f'{state}-{direction}' in player['clips']
@@ -88,6 +89,20 @@ def run(require_complete=False):
         assert all(duration > 0 for duration in clip['durations_ms'])
         for frame in clip['frames']:
             frame_check(size, frame['rect'], player['pivot'])
+        state = name.split('-', 1)[0]
+        if state in ('idle', 'walk', 'run', 'attack'):
+            mounts = clip['torch_mounts']
+            indices = [clip.get('still_frame', 0)] if state == 'idle' else range(len(clip['frames']))
+            for index in indices:
+                x, y = mounts[index]
+                _, _, width, height = clip['frames'][index]['rect']
+                assert 0 <= x < width and 0 <= y < height, (name, index)
+        if state in ('walk', 'run', 'attack'):
+            key = 'upper_layer_rects' if state == 'attack' else 'leg_layer_rects'
+            assert len(clip[key]) == len(clip['frames']), name
+            for rect, frame in zip(clip[key], clip['frames']):
+                assert rect[2:] == frame['rect'][2:], name
+                frame_check(layer_size, rect, player['pivot'])
         if name.startswith(('walk-', 'run-')):
             if 'cycle_distance_px' in clip:
                 cycle = clip['cycle_distance_px']
