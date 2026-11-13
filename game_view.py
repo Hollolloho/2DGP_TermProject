@@ -1,12 +1,14 @@
 """Quarter-view exploration and fixed-front 2D-perspective trap rendering."""
+from bisect import bisect_right
 import ctypes
+from itertools import accumulate
 import json
 import math
 from pathlib import Path
 import pico2d.pico2d as p
 from maze_model import BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS, COLS, ROWS, PHASES, TRAP_LENGTH
 from maze_model import PHASE_SECONDS, SHIFT_SECONDS, SHIFT_SWAP_AT
-from maze_model import ATTACK_FORWARD, HALF_TILE_W, HALF_TILE_H, project
+from maze_model import ATTACK_FORWARD, DEFAULT_ATTACK_HIT_MS, HALF_TILE_W, HALF_TILE_H, project
 from trap_view import Corridor
 
 LW, LH, SCALE = 640, 400, 2
@@ -15,6 +17,7 @@ WALL_NEIGHBORS = ((0, -1, 1), (1, 0, 2), (0, 1, 4), (-1, 0, 8))
 MEMORY_LIGHT = .32
 LIGHT_FADE_SECONDS = .20
 TORCH_MOUNT_HEIGHT = 24
+PLAYER_ATLAS_DIR = Path('sprite/quarter/player_explorer_attack_v2')
 
 
 class View:
@@ -27,7 +30,7 @@ class View:
         self.font = p.load_font('C:/Windows/Fonts/malgun.ttf', 12)
         self.title = p.load_font('C:/Windows/Fonts/malgunbd.ttf', 17)
         self.big = p.load_font('C:/Windows/Fonts/malgunbd.ttf', 46)
-        player = Path('sprite/quarter/player_explorer_v1')
+        player = PLAYER_ATLAS_DIR
         self.player_catalog = json.loads((self.root/player/'explorer.json').read_text(encoding='utf-8'))
         directions = self.player_catalog['world_direction_to_screen']
         self.facing = tuple(directions[name] for name in ('down', 'left', 'right', 'up'))
@@ -45,6 +48,8 @@ class View:
         self.images['torch'] = self.load(torch.with_suffix('.png'), pixel=True)
         dagger_dir = Path('sprite/quarter/effects')
         self.dagger_fx = json.loads((self.root/dagger_dir/'dagger-slash.json').read_text(encoding='utf-8'))
+        self.dagger_frame_starts_ms = tuple(self.dagger_fx['frame_starts_ms'])
+        self.dagger_end_ms = self.dagger_fx['start_ms']+self.dagger_fx['duration_ms']
         self.images['dagger-slash'] = self.load(dagger_dir/self.dagger_fx['image'], pixel=True)
         self.logical = self.target(LW, LH)
         self.display = self.target(LW*SCALE, LH*SCALE)
@@ -129,25 +134,23 @@ class View:
                 self.text_cache.pop(next(iter(self.text_cache)))
         image.draw(x+image.w/2,LH-y)
 
+    def attack_frame_index(self, game):
+        clip = self.player_catalog['clips'].get(game.attack_clip)
+        if clip is not None:
+            for index, end_ms in enumerate(accumulate(clip['durations_ms'])):
+                if game.attack_time < end_ms/1000:
+                    return index
+        return None
+
     def player_frame(self, game):
         clip, index = self.player_pose(game)
         return clip['frames'][index]['rect']
 
     def player_pose(self, game):
         clips = self.player_catalog['clips']
-        attack = clips.get(game.attack_clip)
-        attack_ms = game.attack_time*1000
-        if attack is not None:
-            durations = attack['durations_ms']
-            if attack_ms < sum(durations):
-                if attack['loop']:
-                    attack_ms %= sum(durations)
-                for index, duration in enumerate(durations):
-                    if attack_ms < duration:
-                        return attack, index
-                    attack_ms -= duration
-                return attack, len(attack['frames']) - 1
-
+        attack_index = self.attack_frame_index(game)
+        if attack_index is not None:
+            return clips[game.attack_clip], attack_index
         state = {'walk': 'walk', 'sprint': 'run'}.get(game.player.state, 'idle')
         return self.locomotion_pose(game, state)
 
@@ -163,21 +166,27 @@ class View:
         index = int(game.player.gait_phase*count+1e-9)
         return clip, (index+offset) % count
 
-    def dagger_frame(self, game, x, y):
-        fx = self.dagger_fx
-        if game.attack_clip is None:
+    def dagger_frame(self, game, x, y, body, attack_index):
+        # 각 타격에서 같은 검격 효과를 재생하고, 효과의 타격 포즈를 이벤트에 맞춘다.
+        time = game.attack_time
+        for hit_ms in game.attack_hits_ms:
+            offset_ms = hit_ms-DEFAULT_ATTACK_HIT_MS
+            start = (self.dagger_frame_starts_ms[0]+offset_ms)/1000
+            end = (self.dagger_end_ms+offset_ms)/1000
+            if start <= time < end:
+                break
+        else:
             return None
-        elapsed_ms = game.attack_time*1000 - fx['start_ms']
-        if not 0 <= elapsed_ms < fx['duration_ms']:
-            return None
-        clip = fx['clips'][game.attack_facing]
-        index = int(elapsed_ms*fx['fps']/1000)
+        clip = self.dagger_fx['clips'][body['direction']]
+        index = bisect_right(self.dagger_frame_starts_ms, time, key=lambda ms: (ms+offset_ms)/1000)-1
         rect = clip['frames'][index]['rect']
         scale = self.world_scale
-        ax, ay = fx['anchor_px']
+        # Follow the dagger pose currently shown in the body atlas, including the recovery.
+        tip_x, tip_y = clip['tip_px'][attack_index]
         px, py = self.player_catalog['pivot']
-        fx_x, fx_y = fx['pivot']
-        dst = (x+(ax-px-fx_x)*scale, y+(ay-py-fx_y)*scale, rect[2]*scale, rect[3]*scale)
+        anchor_x, anchor_y = clip['anchor_px'][index]
+        dst = (x+(tip_x-px-anchor_x)*scale, y+(tip_y-py-anchor_y)*scale,
+               rect[2]*scale, rect[3]*scale)
         return clip['draw_layer'], dst, rect
 
     def player(self, x, y, game):
@@ -193,7 +202,8 @@ class View:
             torch = (left+ax*scale, top+ay*scale, game.time, .22*scale)
         torch_in_front = clip.get('direction') in ('n', 'ne', 'e', 'nw')
 
-        dagger = self.dagger_frame(game, x, y)
+        attacking = clip is self.player_catalog['clips'].get(game.attack_clip)
+        dagger = self.dagger_frame(game, x, y, clip, index) if attacking else None
         if dagger and dagger[0] == 'back':
             self.image('dagger-slash', dagger[1], dagger[2])
         if torch and not torch_in_front:

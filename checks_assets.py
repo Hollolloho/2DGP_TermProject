@@ -40,8 +40,11 @@ def check_dagger(player):
     size = png_size(directory/effect['image'])
     assert set(effect['clips']) == set(ATTACK_DIRECTIONS)
     assert effect['frame_size'] == [64, 64]
-    assert effect['pivot'] == effect['anchor_px'] == player['pivot'] == [32, 54]
-    assert (effect['start_ms'], effect['duration_ms'], effect['fps']) == (200, 200, 60)
+    assert effect['pivot'] == player['pivot'] == [32, 54]
+    assert (effect['start_ms'], effect['duration_ms']) == (200, 200)
+    starts = effect['frame_starts_ms']
+    assert len(starts) == 12 and starts == sorted(set(starts))
+    assert starts[0] == effect['start_ms'] and starts[-1] < starts[0]+effect['duration_ms']
     assert (directory/'CREDITS.txt').is_file()
     for direction in ATTACK_DIRECTIONS:
         fx_clip = effect['clips'][direction]
@@ -55,12 +58,17 @@ def check_dagger(player):
         clip = player['clips'][f'attack-{direction}']
         durations, frames = clip['durations_ms'], clip['frames']
         assert clip['direction'] == direction and not clip['loop']
-        assert durations == [70, 80, 83, 42, 58, 75, 92, 100] and len(frames) == 8
-        assert len({tuple(frame['rect']) for frame in frames}) == 8
+        assert len(durations) == len(frames) == 13 and sum(durations) == 750
+        assert len({tuple(frame['rect']) for frame in frames}) == len(frames)
         assert all(frame['rect'][2:] == [64, 64] for frame in frames)
         hit = [event for event in clip['events'] if event['name'] == 'hit']
-        assert len(hit) == 1 and hit[0]['frame'] == 3
-        assert hit[0]['at_ms'] == 233 == sum(durations[:3])
+        assert [(event['frame'], event['at_ms']) for event in hit] == [(3, 233), (8, 466)]
+        assert starts[2] == hit[0]['at_ms']
+        assert all(sum(durations[:event['frame']]) == event['at_ms'] for event in hit)
+        assert len(fx_clip['tip_px']) == len(frames)
+        assert len(fx_clip['anchor_px']) == len(fx_clip['frames'])
+        for x, y in (*fx_clip['tip_px'], *fx_clip['anchor_px']):
+            assert 0 <= x < 64 and 0 <= y < 64
 
 
 def run(require_complete=False):
@@ -76,7 +84,7 @@ def run(require_complete=False):
     for frame in data['frames']:
         r = frame['frame']
         frame_check(size, [r[key] for key in ('x','y','w','h')], data['meta']['pixelfx']['pivot'])
-    player_dir = ROOT/'sprite/quarter/player_explorer_v1'
+    player_dir = ROOT/'sprite/quarter/player_explorer_attack_v2'
     player = json.loads((player_dir/'explorer.json').read_text(encoding='utf-8'))
     size = png_size(player_dir/player['image'])
     layer_size = png_size(player_dir/player['moving_attack_image'])

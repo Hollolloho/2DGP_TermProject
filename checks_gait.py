@@ -178,7 +178,7 @@ def check_clip_metadata():
                 attack = clips['attack-'+facing]
                 game.update(.025, -dx, -dy)
                 assert player.screen_facing != facing
-                assert game.attack_facing == facing and game.attack_hit_at == .233
+                assert game.attack_facing == facing and game.attack_hits_ms == (233,)
                 assert view.player_frame(game) is attack['frames'][0]['rect']
 
     game = room(clips)

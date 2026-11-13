@@ -1,6 +1,8 @@
 """main.py --smoke에서 실행하는 실제 SDL 입력·화면 검사."""
 import json
 import ctypes
+from bisect import bisect_right
+from itertools import accumulate
 import pico2d.pico2d as p
 from maze_model import DIRECTIONS, TRAP_LENGTH, Game, shortest_path
 from maze_model import PHASE_SECONDS, PHASE_WARNING_SECONDS, SHIFT_SWAP_AT
@@ -59,53 +61,116 @@ def run(app):
 
     def check_dagger_timeline(room):
         view = app.view
-        commands = (('n', (w,)), ('s', (s,)), ('w', (a,)), ('e', (d,)),
-                    ('nw', (w, a)), ('ne', (w, d)), ('sw', (s, a)), ('se', (s, d)))
-        # 60fps 프레임 중앙을 샘플링하고 표시 구간의 양쪽 경계를 검사한다.
-        fx_checks = {200+(index+.5)*1000/60: index for index in range(12)}
-        fx_checks.update({199: None, 401: None})
+        commands = (('n', (w,), (-1, -1)), ('s', (s,), (1, 1)),
+                    ('w', (a,), (-1, 1)), ('e', (d,), (1, -1)),
+                    ('nw', (w, a), (-1, 0)), ('ne', (w, d), (0, -1)),
+                    ('sw', (s, a), (0, 1)), ('se', (s, d), (1, 0)))
+        fx_starts = view.dagger_fx['frame_starts_ms']
+        assert fx_starts == [200, 217, 233, 250, 267, 283, 300, 317, 333, 350, 367, 383]
+        # 각 검격의 프레임 중앙과 타격 경계 전후를 검사한다.
+        strike_checks = {(start+end)/2: index for index, (start, end) in
+                         enumerate(zip(fx_starts, fx_starts[1:]+[400]))}
+        strike_checks.update({199: None, 200: 0, 232: 1, 233: 2, 234: 2, 400: None})
+        fx_checks = strike_checks | {ms+233: index for ms, index in strike_checks.items()}
+        hit_checks = (232, 233, 234, 465, 466, 467)
         image = view.image
+        foot_x, foot_y = 180, 140
+        pivot_x, pivot_y = view.player_catalog['pivot']
         calls = []
 
         def record(name, rect, source, *args, **kwargs):
             calls.append((name, rect, source))
             image(name, rect, source, *args, **kwargs)
 
-        room.guard_hp = 0
+        def tip_pixels(x, y):
+            rect = p.SDL_Rect(round(x)-4, round(y)-4, 9, 9)
+            pixels = (ctypes.c_ubyte*(rect.w*rect.h*4))()
+            assert p.SDL_RenderReadPixels(p.renderer, rect, p.SDL_PIXELFORMAT_RGBA32, pixels, rect.w*4) == 0
+            return bytes(pixels)
+
         view.world_scale = 1
         p.SDL_SetRenderTarget(p.renderer, view.logical)
         view.image = record
         try:
-            for facing, keys in commands:
+            for facing, keys, (dx, dy) in commands:
                 room.player.x, room.player.y = 15.5, 11.5
+                room.guard, room.guard_hp = (15+dx, 11+dy), 3
                 room.attack_time = 10.
                 press(*keys, ticks=1)
                 click_attack()
                 assert room.attack_facing == facing and room.attack_clip == 'attack-'+facing
+                assert room.guard_hp == 3
                 body = room.player_clips[room.attack_clip]
                 fx = view.dagger_fx['clips'][facing]
                 durations = body['durations_ms']
-                body_checks = {sum(durations[:i])+duration/2: i for i, duration in enumerate(durations)}
-                for ms in sorted(body_checks.keys() | fx_checks.keys()):
+                body_starts = [0, *accumulate(durations[:-1])]
+                body_checks = {start+duration/2: i for i, (start, duration) in
+                               enumerate(zip(body_starts, durations))}
+                hits = [event for event in body['events'] if event['name'] == 'hit']
+                assert room.attack_hits_ms == (233, 466)
+                for hit in hits:
+                    ms, frame = hit['at_ms'], hit['frame']
+                    assert ms == body_starts[frame]
+                    body_checks.update({ms-1: frame-1, ms: frame, ms+1: frame})
+                for ms in sorted(body_checks.keys() | fx_checks.keys() | {400, 750}):
                     remaining = ms/1000-room.attack_time
                     ticks = ceil(remaining/.05)
                     press(timesteps=[remaining/ticks]*ticks)
+                    if room.attack_time < ms/1000:
+                        press(timesteps=[ms/1000-room.attack_time])
+                    expected_hp = 3-sum(ms >= hit for hit in (233, 466))
+                    assert room.guard_hp == expected_hp, (facing, ms, room.guard_hp)
+                    if ms == 400:
+                        click_attack()
+                        assert isclose(room.attack_time, .4)
                     if ms in body_checks:
                         assert view.player_frame(room) == body['frames'][body_checks[ms]]['rect']
                     if ms in fx_checks:
                         calls.clear()
-                        view.player(180, 140, room)
+                        view.clear()
+                        view.player(foot_x, foot_y, room)
                         index = fx_checks[ms]
                         if index is None:
                             assert [item[0] for item in calls] == ['player']
                         else:
                             pos = 0 if fx['draw_layer'] == 'back' else 1
                             assert len(calls) == 2 and calls[1-pos][0] == 'player'
-                            assert calls[pos] == ('dagger-slash', (148, 86, 64, 64), fx['frames'][index]['rect'])
+                            body_index = bisect_right(body_starts, ms)-1
+                            tip_x, tip_y = fx['tip_px'][body_index]
+                            anchor_x, anchor_y = fx['anchor_px'][index]
+                            tip_x, tip_y = foot_x-pivot_x+tip_x, foot_y-pivot_y+tip_y
+                            source = fx['frames'][index]['rect']
+                            expected = (tip_x-anchor_x, tip_y-anchor_y, *source[2:])
+                            name, destination, drawn_source = calls[pos]
+                            assert name == 'dagger-slash' and drawn_source == source
+                            assert all(isclose(actual, target, abs_tol=1e-9)
+                                       for actual, target in zip(destination, expected))
+                            if ms in hit_checks:
+                                with_effect = tip_pixels(tip_x, tip_y)
+                                view.clear()
+                                image(*calls[1-pos])
+                                assert with_effect != tip_pixels(tip_x, tip_y), (facing, 'occluded effect tip')
+                                # Moving attacks use the same tip, with legs underneath the masked upper body.
+                                room.player.walk_now()
+                                calls.clear()
+                                view.clear()
+                                view.player(foot_x, foot_y, room)
+                                assert len(calls) == 3
+                                assert calls[0 if pos == 0 else 2] == (name, destination, drawn_source)
+                                layers = [call for call in calls if call[0] == 'moving-attack']
+                                assert len(layers) == 2 and layers[1][2] == body['upper_layer_rects'][body_index]
+                                with_moving_effect = tip_pixels(tip_x, tip_y)
+                                view.clear()
+                                for layer in layers:
+                                    image(*layer)
+                                assert with_moving_effect != tip_pixels(tip_x, tip_y), (facing, 'occluded moving effect tip')
+                                room.player.rest()
+                click_attack()
+                assert room.attack_time == 0.
         finally:
             view.image = image
             p.SDL_SetRenderTarget(p.renderer, None)
-        print('PASS: SDL 8 attack directions, 8 body and 12 effect frames in order, fixed anchor, draw layer and effect window.')
+        print('PASS: SDL 8 attack directions, 233/466ms body frames and hits, tip-aligned effect pixels and draw layer.')
 
     def check_attack_render():
         room = Game(g.seed, player_clips=app.view.player_catalog['clips'])
@@ -130,6 +195,8 @@ def run(app):
             image, effect = view.image, view.effect
             old_scale, view.world_scale = view.world_scale, 1
             room.player.torch = True
+            guard = room.guard
+            room.guard = (1, 1)
             try:
                 view.image = lambda name, dst, src: calls.append((name, dst, src))
                 view.effect = lambda name, x, y, time, scale: calls.append((name, (x, y), None))
@@ -140,9 +207,24 @@ def run(app):
                     ('moving-attack', (148, 86, 64, 64), walk_sw['leg_layer_rects'][leg_index]),
                     ('moving-attack', (148, 86, 64, 64), clip['upper_layer_rects'][0]),
                 ]
+                press(w, d, timesteps=[.05]*14+[.026])
+                assert room.attack_time >= .75 and room.player.screen_facing == 'ne'
+                assert room.guard_hp == 3
+                calls.clear()
+                view.player(180, 140, room)
+                walk, frame = view.locomotion_pose(room, 'walk')
+                assert walk is room.player_clips['walk-ne']
+                assert calls == [
+                    ('player', (148, 86, 64, 64), walk['frames'][frame]['rect']),
+                    ('torch', (148+walk['torch_mounts'][frame][0], 86+walk['torch_mounts'][frame][1]), None),
+                ]
             finally:
                 room.player.torch = False
+                room.guard = guard
                 view.image, view.effect, view.world_scale = image, effect, old_scale
+            room.player.x, room.player.y = 15.5, 11.5
+            press(s, a, ticks=1)
+            click_attack()
             hit = next(event for event in clip['events'] if event['name'] == 'hit')
             before_hit = hit['at_ms']/1000-room.attack_time-.001
             ticks = ceil(before_hit/.05)
@@ -155,7 +237,7 @@ def run(app):
             press(p.SDLK_r)
             assert app.game is not room and app.game.attack_facing is None and app.game.attack_clip is None
             assert app.game.guard_hp == 3
-            print('PASS: SDL NE movement during SW attack keeps SW upper body and torch, reverses SW gait, hits on event and resets on R.')
+            print('PASS: SDL NE movement during SW attack keeps SW upper body and torch, reverses SW gait, then resumes NE walk; hit and R verified.')
         finally:
             app.game = g
             app.held.clear()
@@ -621,5 +703,6 @@ def run(app):
         'sdl_walk_new_passage':True,'sdl_phase_map':True,'sdl_phase_trap_return':True,
         'sdl_closed_wall_blocks':True,'new_wall_hides_old_visibility_cache':True,
         'sdl_attack_direction_hit_and_restart':True,
+        'sdl_attack_233_466ms_double_hit_all_directions':True,
         'sdl_animated_dagger':True,
         'sdl_R_before_after_swap':True},indent=2),encoding='utf-8')
