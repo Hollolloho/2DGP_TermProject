@@ -52,7 +52,6 @@ class View:
         self.light_game, self.light_time, self.torch_light = None, 0., 0.
         self.discovery, self.exposure = {}, {}
         self.light_revision = -1
-        self.animated_player, self.animation_state, self.animation_started = None, None, 0
         self.last_mode, self.mode_changed = None, -10
         self.mode_game = None
 
@@ -129,34 +128,38 @@ class View:
         image.draw(x+image.w/2,LH-y)
 
     def player_frame(self, game):
-        player = game.player
+        clip, index = self.player_pose(game)
+        return clip['frames'][index]['rect']
+
+    def player_pose(self, game):
         clips = self.player_catalog['clips']
         attack = clips.get(game.attack_clip)
         attack_ms = game.attack_time*1000
-        if attack is not None and attack_ms < sum(attack['durations_ms']):
-            clip, elapsed_ms = attack, attack_ms
-        else:
-            state = {'walk': 'walk', 'sprint': 'run'}.get(player.state, 'idle')
-            if player is not self.animated_player or state != self.animation_state:
-                self.animated_player, self.animation_state = player, state
-                self.animation_started = game.time
-            name = game.locomotion_clip_name(state)
-            clip = clips[name]
-            if state in ('walk', 'run'):
-                # 거리 위상만 읽는다. 렌더 횟수·시간·카메라·확대는 보행을 진행시키지 않는다.
-                # 공통 접지 위상 0에 맞는 프레임 오프셋을 더한다. 구 NW 걷기만 기본 1이다.
-                offset = clip.get('phase_offset_frames', 1 if name == 'walk-nw' else 0)
-                index = int(player.gait_phase*len(clip['frames'])+1e-9)
-                return clip['frames'][(index+offset) % len(clip['frames'])]['rect']
-            elapsed_ms = (game.time-self.animation_started)*1000
-        durations = clip['durations_ms']
-        if clip['loop']:
-            elapsed_ms %= sum(durations)
-        for frame, duration in zip(clip['frames'], durations):
-            if elapsed_ms < duration:
-                return frame['rect']
-            elapsed_ms -= duration
-        return clip['frames'][-1]['rect']
+        if attack is not None:
+            durations = attack['durations_ms']
+            if attack_ms < sum(durations):
+                if attack['loop']:
+                    attack_ms %= sum(durations)
+                for index, duration in enumerate(durations):
+                    if attack_ms < duration:
+                        return attack, index
+                    attack_ms -= duration
+                return attack, len(attack['frames']) - 1
+
+        state = {'walk': 'walk', 'sprint': 'run'}.get(game.player.state, 'idle')
+        return self.locomotion_pose(game, state)
+
+    def locomotion_pose(self, game, state):
+        name = game.locomotion_clip_name(state)
+        clip = self.player_catalog['clips'][name]
+        if state == 'idle':
+            return clip, clip.get('still_frame', 0)
+
+        # 거리 위상과 클립별 접지 오프셋으로 보행 프레임을 선택한다.
+        offset = clip.get('phase_offset_frames', int(name == 'walk-nw'))
+        count = len(clip['frames'])
+        index = int(game.player.gait_phase*count+1e-9)
+        return clip, (index+offset) % count
 
     def dagger_frame(self, game, x, y):
         fx = self.dagger_fx

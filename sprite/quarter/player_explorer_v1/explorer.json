@@ -129,7 +129,8 @@
           0,
           0
         ]
-      ]
+      ],
+      "still_frame": 1
     },
     "idle-se": {
       "state": "idle",
