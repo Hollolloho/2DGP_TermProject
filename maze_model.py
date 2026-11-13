@@ -20,7 +20,7 @@ MOVE_EPSILON = 1e-7  # 벽 면과 겹치지 않도록 남기는 격자 단위의
 BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS = 5.5, 7
 DIRECTIONS = ((0, 1), (-1, 0), (1, 0), (0, -1))  # down, left, right, up
 DIAGONAL_FACINGS = ('sw', 'nw', 'se', 'ne')
-ATTACK_COOLDOWN, DEFAULT_ATTACK_HIT = .75, .233
+ATTACK_COOLDOWN, DEFAULT_ATTACK_HIT_MS = .75, 233
 PHASES = ('낮', '밤', '새벽')
 # 플레이테스트용 기본값. 최종 시간·연출 강도는 조정할 수 있다.
 PHASE_SECONDS, PHASE_WARNING_SECONDS = 60.0, 5.0
@@ -282,7 +282,7 @@ class Game:
         self.layout_revision = 0
         self.attack_time = 10.0
         self.attack_facing = self.attack_clip = None
-        self.attack_hit_at = DEFAULT_ATTACK_HIT
+        self.attack_hits_ms = ()
         self.observed_by_phase = [set() for _ in PHASES]
         self.visited_by_phase = [set() for _ in PHASES]
         self.observed = self.observed_by_phase[self.phase]
@@ -452,6 +452,7 @@ class Game:
             self.trap_discovered = True
             self.map_open = False
             self.attack_facing = self.attack_clip = None
+            self.attack_hits_ms = ()
             self.enter_room()
             self.message(f'A 입구 → B 출구 · 일반 통로 {self.shortcut_distance}칸을 우회', 5)
         elif self.close_to(self.fountain):
@@ -463,6 +464,7 @@ class Game:
                 self.message('샘물 사용 · 체력 회복')
         elif self.close_to(self.exit):
             self.attack_facing = self.attack_clip = None
+            self.attack_hits_ms = ()
             self.escape()
         self.update_visibility()
 
@@ -490,10 +492,15 @@ class Game:
         clip = 'attack-'+self.attack_facing
         self.attack_clip = clip if clip in self.player_clips else 'attack-'+diagonal
         events = self.player_clips.get(self.attack_clip, {}).get('events', ())
-        self.attack_hit_at = next((event['at_ms']/1000 for event in events if event['name'] == 'hit'),
-                                  DEFAULT_ATTACK_HIT)
+        self.attack_hits_ms = tuple(event['at_ms'] for event in events if event['name'] == 'hit')
+        if not self.attack_hits_ms:
+            self.attack_hits_ms = (DEFAULT_ATTACK_HIT_MS,)
         self.attack_time = 0
         self.player.swing()
+
+    @property
+    def attack_hit_at(self):
+        return (self.attack_hits_ms or (DEFAULT_ATTACK_HIT_MS,))[0] / 1000
 
     def hit_guard(self):
         if self.guard_hp <= 0 or not self.close_to(self.guard, 1.8):
@@ -589,7 +596,8 @@ class Game:
                 self.player.walk_now()
         elif self.player.state in ('walk', 'sprint') or self.attack_time >= ATTACK_COOLDOWN:
             self.player.rest()
-        if (self.attack_facing and not self.map_open
-                and previous_attack_time < self.attack_hit_at <= self.attack_time):
-            self.hit_guard()
+        if self.attack_facing and not self.map_open:
+            for hit_ms in self.attack_hits_ms:
+                if previous_attack_time < hit_ms/1000 <= self.attack_time:
+                    self.hit_guard()
         self.update_visibility()

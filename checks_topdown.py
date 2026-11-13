@@ -32,7 +32,8 @@ def check_visibility():
 
 
 def check_dagger():
-    catalog = Path(__file__).parent/'sprite/quarter/player_explorer_v1/explorer.json'
+    player_atlases = Path(__file__).parent/'sprite/quarter'
+    catalog = player_atlases/'player_explorer_attack_v2/explorer.json'
     clips = json.loads(catalog.read_text(encoding='utf-8'))['clips']
     game = Game(player_clips=clips)
     game.grid = [[0]*COLS for _ in range(ROWS)]
@@ -48,24 +49,37 @@ def check_dagger():
         game.attack()
         assert game.attack_facing == facing and game.attack_clip == 'attack-'+facing
         assert game.guard_hp == 3
-        return next(event['at_ms']/1000 for event in clips[game.attack_clip]['events'] if event['name'] == 'hit')
+        assert game.attack_hits_ms == (233, 466)
 
     for facing, dx, dy in directions:
         for sign in (1, -1):
             for times in SCHEDULES:
-                hit_at = begin(facing, (15+sign*dx, 11+sign*dy))
+                begin(facing, (15+sign*dx, 11+sign*dy))
                 for dt in times:
                     game.update(dt)
-                    expected = 2 if sign == 1 and game.attack_time >= hit_at else 3
+                    expected = 3 - sum(game.attack_time >= hit_at for hit_at in (.233, .466)) if sign == 1 else 3
                     assert game.guard_hp == expected, (facing, sign, game.attack_time)
 
-    # 이동 방향을 바꿔도 공격은 시작 방향으로 한 번만 맞는다.
+    # 이동 방향을 바꿔도 두 타격은 시작 방향을 따른다.
     begin('sw', (15, 12))
     game.update(.025, 0, -1)
     assert player.screen_facing == 'ne' and game.attack_facing == 'sw'
     for _ in range(10):
         game.update(.025)
     assert game.guard_hp == 2 and game.guard_alert_until > game.time
+    for _ in range(8):
+        game.update(.025)
+    assert game.guard_hp == 1
+
+    # 첫 베기가 빗나가도 되베기에서 사거리와 시야를 새로 확인한다.
+    begin('e', (18, 11))
+    for _ in range(10):
+        game.update(.025)
+    assert game.guard_hp == 3
+    game.guard = (16, 11)
+    for _ in range(9):
+        game.update(.025)
+    assert game.guard_hp == 2
 
     # 1.8칸 안에 있어도 벽 뒤나 정확히 옆에 있는 대상은 맞지 않는다.
     game.grid[11][16] = 1
@@ -73,23 +87,46 @@ def check_dagger():
     player.x = 15.75
     assert game.can_stand(player.x, player.y)
     assert math.hypot(game.guard[0]+.5-player.x, game.guard[1]+.5-player.y) < 1.8
-    for _ in range(10):
+    for _ in range(20):
         game.update(.025)
     assert game.guard_hp == 3
     game.grid[11][16] = 0
     begin('n', (16, 10))
-    for _ in range(10):
+    for _ in range(20):
         game.update(.025)
     assert game.guard_hp == 3
 
     begin('sw', (15, 12))
     game.map_open = True
-    for _ in range(10):
+    for _ in range(20):
         game.update(.025)
     game.map_open = False
     game.update(.05)
     assert game.guard_hp == 3
-    print('PASS: 8-way dagger front/rear, catalog hit event at 30/60/120/variable dt, direction lock, wall and map.')
+
+    # 함정방에 들어가면 남아 있던 되베기가 복귀 뒤에 적용되지 않는다.
+    begin('sw', (15, 12))
+    for _ in range(10):
+        game.update(.025)
+    assert game.guard_hp == 2
+    game.trap_cell = (15, 11)
+    player.torch = True
+    game.interact()
+    assert game.state == 'trap' and not game.attack_hits_ms
+    game.return_from_trap()
+    for _ in range(10):
+        game.update(.025)
+    assert game.guard_hp == 2
+
+    legacy_catalog = player_atlases/'player_explorer_v1/explorer.json'
+    game.player_clips = json.loads(legacy_catalog.read_text(encoding='utf-8'))['clips']
+    game.guard_hp, game.attack_time = 3, 10.
+    game.attack()
+    assert game.attack_hits_ms == (233,)
+    for _ in range(20):
+        game.update(.025)
+    assert game.guard_hp == 2
+    print('PASS: 8-way dagger double hit at 30/60/120/variable dt, direction lock, wall, map, trap and legacy single hit.')
 
 
 def run():
