@@ -88,6 +88,14 @@ def run(require_complete=False):
         assert all(duration > 0 for duration in clip['durations_ms'])
         for frame in clip['frames']:
             frame_check(size, frame['rect'], player['pivot'])
+        state = name.split('-', 1)[0]
+        if state in ('idle', 'walk', 'run', 'attack'):
+            mounts = clip['torch_mounts']
+            indices = [clip.get('still_frame', 0)] if state == 'idle' else range(len(clip['frames']))
+            for index in indices:
+                x, y = mounts[index]
+                _, _, width, height = clip['frames'][index]['rect']
+                assert 0 <= x < width and 0 <= y < height, (name, index)
         if name.startswith(('walk-', 'run-')):
             if 'cycle_distance_px' in clip:
                 cycle = clip['cycle_distance_px']

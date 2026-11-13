@@ -180,14 +180,25 @@ class View:
 
     def player(self, x, y, game):
         scale = self.world_scale
-        frame = self.player_frame(game)
+        clip, index = self.player_pose(game)
+        frame = clip['frames'][index]['rect']
         px, py = self.player_catalog['pivot']
+        left, top = x-px*scale, y-py*scale
+        mounts = clip.get('torch_mounts') if game.player.torch else None
+        torch = None
+        if mounts:
+            ax, ay = mounts[index]
+            torch = (left+ax*scale, top+ay*scale, game.time, .22*scale)
+        torch_in_front = clip.get('direction') in ('n', 'ne', 'e', 'nw')
+
         dagger = self.dagger_frame(game, x, y)
         if dagger and dagger[0] == 'back':
             self.image('dagger-slash', dagger[1], dagger[2])
-        self.image('player', (x-px*scale, y-py*scale, frame[2]*scale, frame[3]*scale), frame)
-        if game.player.torch:
-            self.effect('torch', x-8*scale, y-23*scale, game.time, .22*scale)
+        if torch and not torch_in_front:
+            self.effect('torch', *torch)
+        self.image('player', (left, top, frame[2]*scale, frame[3]*scale), frame)
+        if torch and torch_in_front:
+            self.effect('torch', *torch)
         if dagger and dagger[0] == 'front':
             self.image('dagger-slash', dagger[1], dagger[2])
 
