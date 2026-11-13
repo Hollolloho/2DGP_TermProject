@@ -498,10 +498,6 @@ class Game:
         self.attack_time = 0
         self.player.swing()
 
-    @property
-    def attack_hit_at(self):
-        return (self.attack_hits_ms or (DEFAULT_ATTACK_HIT_MS,))[0] / 1000
-
     def hit_guard(self):
         if self.guard_hp <= 0 or not self.close_to(self.guard, 1.8):
             return
