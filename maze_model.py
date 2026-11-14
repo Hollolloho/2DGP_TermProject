@@ -484,11 +484,29 @@ class Game:
 
     def line_of_sight(self, x, y):
         px, py = self.player.x, self.player.y
-        steps = max(1, math.ceil(math.hypot(x+.5-px, y+.5-py)*5))
-        for i in range(1, steps):
-            t = i/steps
-            cell = math.floor(px+(x+.5-px)*t), math.floor(py+(y+.5-py)*t)
-            if cell != (x,y) and self.solid(*cell):
+        cx, cy = math.floor(px), math.floor(py)
+        dx, dy = x+.5-px, y+.5-py
+        step_x, step_y = (1 if dx > 0 else -1), (1 if dy > 0 else -1)
+        stride_x = 1/abs(dx) if dx else math.inf
+        stride_y = 1/abs(dy) if dy else math.inf
+        next_x = (cx+(step_x > 0)-px)/dx if dx else math.inf
+        next_y = (cy+(step_y > 0)-py)/dy if dy else math.inf
+        while (cx, cy) != (x, y):
+            # Visit every crossed cell, even when the ray clips only a corner.
+            if math.isclose(next_x, next_y, rel_tol=0., abs_tol=1e-12):
+                # A corner shared by two solid cells leaves no opening.
+                if self.solid(cx+step_x, cy) and self.solid(cx, cy+step_y):
+                    return False
+                cx, cy = cx+step_x, cy+step_y
+                next_x, next_y = next_x+stride_x, next_y+stride_y
+            elif next_x < next_y:
+                cx += step_x
+                next_x += stride_x
+            else:
+                cy += step_y
+                next_y += stride_y
+            # The first blocking wall itself is visible.
+            if (cx, cy) != (x, y) and self.solid(cx, cy):
                 return False
         return True
 

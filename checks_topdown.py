@@ -30,6 +30,14 @@ def check_visibility():
     assert {(10, 16), (10, 17), (14, 14)} <= game.visible
     assert {(10, 18), (17, 11), (13, 10), (16, 10)}.isdisjoint(game.visible)
 
+    # An exact diagonal may graze one corner, but cannot pass between two walls.
+    game.player.x = game.player.y = 10.5
+    game.grid[10][11] = 1
+    assert game.line_of_sight(11, 11)
+    game.grid[11][10] = 1
+    assert not game.line_of_sight(11, 11)
+    assert game.line_of_sight(11, 10)
+
 
 def check_dagger():
     player_atlases = Path(__file__).parent/'sprite/quarter'
@@ -91,6 +99,18 @@ def check_dagger():
         game.update(.025)
     assert game.guard_hp == 3
     game.grid[11][16] = 0
+
+    # The ray (11.72, 12.26) -> (12.5, 11.5) briefly clips wall (11, 11).
+    for wall, expected_hp in ((1, 3), (0, 1)):
+        game.grid[11][11] = wall
+        begin('e', (12, 11))
+        player.x, player.y = 11.72, 12.26
+        assert game.can_stand(player.x, player.y)
+        assert game.line_of_sight(*game.guard) == (wall == 0)
+        for _ in range(20):
+            game.update(.025)
+        assert game.guard_hp == expected_hp
+
     begin('n', (16, 10))
     for _ in range(20):
         game.update(.025)
