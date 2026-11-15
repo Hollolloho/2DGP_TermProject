@@ -2,9 +2,9 @@
 import ctypes
 import json
 import pico2d.pico2d as p
-from maze_model import Game
-from game_view import View, LW, LH
-from game_audio import Audio
+from .maze_model import Game
+from .game_view import View, LW, LH
+from .game_audio import Audio
 
 
 class PlayMode:
@@ -31,7 +31,7 @@ class PlayMode:
                 self.running = False
             elif event.type == p.SDL_WINDOWEVENT and event.window.event == p.SDL_WINDOWEVENT_FOCUS_LOST:
                 self.held.clear()
-                self.game.puzzle.dragging = False
+                self.game.puzzle.release()
                 self.puzzle_mouse_held = False
             elif event.type == p.SDL_KEYUP:
                 self.held.discard(event.key.keysym.sym)
@@ -53,8 +53,10 @@ class PlayMode:
                     else:
                         self.running = False
                 elif key == p.SDLK_f:
+                    previous = self.game.state
                     self.game.interact()
-                    self.held.clear()
+                    if previous != 'explore' or self.game.state != 'explore':
+                        self.held.clear()
                 elif key == p.SDLK_m and self.game.state == 'explore':
                     self.game.map_open = not self.game.map_open
                     self.held.clear()
@@ -74,37 +76,34 @@ class PlayMode:
                 elif not self.puzzle_mouse_held:
                     self.game.attack()
             elif event.type == p.SDL_MOUSEBUTTONUP and event.button.button == p.SDL_BUTTON_LEFT:
-                self.game.puzzle.dragging = False
+                self.game.puzzle.release()
                 self.puzzle_mouse_held = False
             elif event.type == p.SDL_MOUSEMOTION:
                 if not event.motion.state & p.SDL_BUTTON_LMASK:
-                    self.game.puzzle.dragging = False
+                    self.game.puzzle.release()
                     self.puzzle_mouse_held = False
                 elif self.game.state == 'puzzle':
                     self.game.drag_puzzle(self.mouse_point(event.motion))
 
         if not self.smoke and not p.SDL_GetWindowFlags(p.window) & p.SDL_WINDOW_INPUT_FOCUS:
             self.held.clear()
-            self.game.puzzle.dragging = False
+            self.game.puzzle.release()
             self.puzzle_mouse_held = False
 
     @staticmethod
     def mouse_point(event):
         width, height = ctypes.c_int(), ctypes.c_int()
         p.SDL_GetWindowSize(p.window, ctypes.byref(width), ctypes.byref(height))
-        return event.x*LW/max(1, width.value), event.y*LH/max(1, height.value)
+        return event.x*LW//max(1, width.value), event.y*LH//max(1, height.value)
 
     def update(self, dt):
         dx = int(p.SDLK_d in self.held)-int(p.SDLK_a in self.held)
         dy = int(p.SDLK_s in self.held)-int(p.SDLK_w in self.held)
         previous = self.game.state
-        hp = self.game.player.hp
         if previous == 'explore':
-            # WASD는 화면 상하좌우, 두 키는 2:1 통로 방향. 화면 거리 정규화는 Game이 맡는다.
-            dx, dy = dx+dy, dy-dx
+            # 일반 미로에서는 W가 격자 -X 통로, D가 격자 -Y 통로 방향이다.
+            dx, dy = dy, -dx
         self.game.update(dt,dx,dy,bool(self.held & {p.SDLK_LSHIFT,p.SDLK_RSHIFT}))
-        if self.game.player.hp < hp:
-            self.game.close_puzzle()
         if previous!=self.game.state:
             self.held.clear()
         if not self.smoke:

@@ -1,11 +1,13 @@
-"""Small model checks: python checks_topdown.py; no SDL window required."""
+"""Small model checks: python -m TestCode.checks_topdown; no SDL window required."""
 import json
 import math
 from pathlib import Path
-from checks_phase_changes import check_first_puzzle, check_phase_changes, finish_shift
-from checks_gait import SCHEDULES, check_gait
-from maze_model import WALK_SPEED, project as project_ground
-from maze_model import Game, COLS, ROWS, DIRECTIONS, distances, TRAP_LENGTH, TRAP_PLANES, TRAP_LATERAL, BLADE_RADIUS, PLAYER_RADIUS, blade_position
+from .checks_phase_changes import check_first_puzzle, check_guardian_puzzle, check_phase_changes, finish_shift
+from .checks_gait import SCHEDULES, check_gait
+from SourceCode.maze_model import WALK_SPEED, project as project_ground
+from SourceCode.maze_model import (Game, COLS, ROWS, DIRECTIONS, distances,
+                                   TRAP_LENGTH, TRAP_PLANES, TRAP_LATERAL, BLADE_RADIUS,
+                                   PLAYER_RADIUS, blade_position)
 
 
 def check_visibility():
@@ -40,11 +42,12 @@ def check_visibility():
 
 
 def check_dagger():
-    player_atlases = Path(__file__).parent/'sprite/quarter'
+    player_atlases = Path(__file__).resolve().parents[1]/'sprite/quarter'
     catalog = player_atlases/'player_explorer_attack_v2/explorer.json'
     clips = json.loads(catalog.read_text(encoding='utf-8'))['clips']
     game = Game(player_clips=clips)
     game.grid = [[0]*COLS for _ in range(ROWS)]
+    game.update_guard = lambda _dt: None
     player = game.player
     directions = (('n', -1, -1), ('s', 1, 1), ('w', -1, 1), ('e', 1, -1),
                   ('nw', -1, 0), ('ne', 0, -1), ('sw', 0, 1), ('se', 1, 0))
@@ -149,12 +152,75 @@ def check_dagger():
     print('PASS: 8-way dagger double hit at 30/60/120/variable dt, direction lock, wall, map, trap and legacy single hit.')
 
 
+def check_sprint_stamina():
+    game = Game(117)
+    player = game.player
+    game.update(.05, dy=-1, sprint=True)
+    start_y = player.y
+    # A sprint tick can move partway before hitting the north boundary.
+    game.update(.05, dy=-1, sprint=True)
+    assert 0 < start_y-player.y < .05*4.1 and player.state == 'sprint'
+    assert math.isclose(player.stamina, 98.2)
+    stopped = player.x, player.y, player.stamina
+    for _ in range(48):
+        game.update(.05, dy=-1, sprint=True)
+    assert (player.x, player.y, player.stamina) == stopped and player.state == 'idle'
+
+    game.update(.05, dy=1)
+    assert player.y > stopped[1] and player.state == 'walk'
+    assert player.stamina == stopped[2]
+
+    dawn = Game(117, 2)
+    dawn.player.x, dawn.player.y = stopped[:2]
+    dawn.player.stamina = 50.
+    dawn.update(.05, dy=-1, sprint=True)
+    assert (dawn.player.x, dawn.player.y) == stopped[:2] and dawn.player.state == 'idle'
+    assert math.isclose(dawn.player.stamina, 50.4)
+    print('PASS: sprint stamina on partial movement, no cost while blocked or walking, dawn recovery.')
+
+
+def check_dawn_empty_stamina():
+    for dt in (.025, .05):
+        maze, trap = Game(117, 2), Game(117, 2)
+        maze.grid = [[0]*COLS for _ in range(ROWS)]
+        maze.player.x, maze.player.y = 10.5, 10.5
+        trap.player.x, trap.player.y = (cell+.5 for cell in trap.trap_cell)
+        trap.player.torch = True
+        trap.interact()
+        assert trap.state == 'trap'
+        maze.player.stamina = trap.player.stamina = 0.
+        # Three steps build a sprint budget. The same tick's recovery cannot fund one.
+        for tick in range(3):
+            maze.update(dt, dx=1, sprint=True)
+            trap.update(dt, dy=-1, sprint=True)
+            assert maze.player.state == 'walk'
+            assert math.isclose(maze.player.x, 10.5+(tick+1)*dt*2.5)
+            assert math.isclose(maze.player.stamina, (tick+1)*dt*8)
+            assert math.isclose(trap.player.stamina, maze.player.stamina)
+        assert 0 < trap.trap_velocity <= 1.8 and trap.trap_progress > 0
+        # Held Shift can use recovered stamina, but it cannot sustain full speed.
+        maze.update(dt, dx=1, sprint=True)
+        trap.update(dt, dy=-1, sprint=True)
+        assert maze.player.state == 'sprint' and trap.trap_velocity > 3*dt*10
+        assert math.isclose(maze.player.stamina, dt*(4*8-18))
+        assert math.isclose(trap.player.stamina, maze.player.stamina)
+        maze.update(dt, dx=1, sprint=True)
+        trap.update(dt, dy=-1, sprint=True)
+        assert maze.player.state == 'walk'
+        assert math.isclose(maze.player.stamina, dt*(5*8-18))
+        assert math.isclose(trap.player.stamina, maze.player.stamina)
+    print('PASS: empty dawn stamina walks in maze and trap; sprint needs prior recovery.')
+
+
 def run():
     check_gait()
     check_phase_changes()
     check_first_puzzle()
+    check_guardian_puzzle()
     check_visibility()
     check_dagger()
+    check_sprint_stamina()
+    check_dawn_empty_stamina()
     for seed in range(32):
         game=Game(seed)
         reachable=distances(game.grid,game.exit)
@@ -229,7 +295,7 @@ def run():
     demo.update(.01)
     assert demo.trap_completed and demo.landing_until>demo.time
     # Projection of a fixed landmark approaches smoothly and responds laterally.
-    from trap_view import project
+    from SourceCode.trap_view import project
     demo.enter_room()
     demo.trap_progress=0;demo.trap_x=0;demo.trap_velocity=0;demo.trap_hit_at=-10
     a=project(demo,1.3,0,7)

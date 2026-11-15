@@ -1,6 +1,6 @@
 # 교체 에셋 제작 목록
 
-기준: PRD v0.15, 2026-11-11.
+기준: [PRD](PRD.md) v0.15, 2026-11-11.
 
 일반 미로는 쿼터뷰, 함정방은 정면 고정 1인칭이다. 기존 탑뷰 그래픽과 구형 원근 시트를 복구하지 않고 새 플레이어의 페인팅 스타일·석재 재질에 맞춰 교체한다. 아래 파일명과 JSON 키는 게임 연결 규격이다.
 
@@ -67,15 +67,15 @@
 - `sprite/quarter/player_explorer_v1`: 4방향·5상태 플레이어. 재제작 불필요.
 - `sprite/wall/materials/base_a.png`, `sprite/surfaces/materials/*`: 1인칭 벽·바닥·천장 재질.
 - `sprite/traps/iron_blade.png`: 칼날.
-- `sprite/traps/boulder_volume_v2/stone_material.png`, `boulder_volume.py`: 회전 돌 재질·표현.
+- `sprite/traps/boulder_volume_v2/stone_material.png`, [`BoulderPractice/boulder_volume.py`](../BoulderPractice/boulder_volume.py): 회전 돌 재질·표현.
 - `sprite/traps/boulder_chase_v1/dust.png`, 해당 `catalog.json`의 `dust`: 먼지 전용.
 - `sprite/topdown/effects/torch.*`, `sword-slash.*`: 불꽃·검격 효과와 라이선스.
 - `sound/stone_step.wav`, `blade_pass.wav`: 기존 효과음.
 
 ## 삭제 참조 정리 범위
 
-- `game_view.py`: 미사용 원근 시트 3개 로딩 제거. 삭제된 탑뷰 시트 대신 위 새 사물 경로와 준비된 플레이어를 사용한다. 지형은 쿼터뷰 좌표 전환 전까지 재사용 재질로 격자를 표시한다.
-- `boulder_practice.py`: 먼지 카탈로그와 새 장애물/출구 카탈로그를 분리한다. 제작 중에는 기존 재질로 충돌 범위·출구를 임시 표시해 규칙 검사를 유지한다.
+- [`SourceCode/game_view.py`](../SourceCode/game_view.py): 미사용 원근 시트 3개 로딩 제거. 삭제된 탑뷰 시트 대신 위 새 사물 경로와 준비된 플레이어를 사용한다. 지형은 쿼터뷰 좌표 전환 전까지 재사용 재질로 격자를 표시한다.
+- [`BoulderPractice/boulder_practice.py`](../BoulderPractice/boulder_practice.py): 먼지 카탈로그와 새 장애물/출구 카탈로그를 분리한다. 제작 중에는 기존 재질로 충돌 범위·출구를 임시 표시해 규칙 검사를 유지한다.
 - 구형 지형·수호자·숏컷 재패킹 도구와 구형 타일 전용 검사, 평면 돌 비교용 복사 코드를 제거한다. 남은 검사는 현재 에셋과 실제 규칙을 검사한다.
 - 새 그래픽이 도착하기 전의 재질·도형 표시는 개발용이다. 쿼터뷰 화면 좌표·가림 처리와 완성 그래픽 검증은 다음 단계에서 진행한다.
 - 에셋 제작 채팅은 위 새 에셋 폴더만 수정한다. 코드·PRD·이 목록·Git 브랜치 전환·병합은 기획 채팅에서 관리한다.

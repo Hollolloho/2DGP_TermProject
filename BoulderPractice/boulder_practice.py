@@ -1,4 +1,4 @@
-"""Invulnerable, playable boulder trap. python boulder_practice.py [--smoke]."""
+"""Invulnerable, playable boulder trap. python -m BoulderPractice.boulder_practice [--smoke]."""
 import argparse
 import ctypes
 import json
@@ -9,7 +9,7 @@ import struct
 import time
 from transitions import Machine
 
-ROOT=Path(os.environ.get('MAZE_PROJECT',Path(__file__).resolve().parent))
+ROOT=Path(os.environ.get('MAZE_PROJECT',Path(__file__).resolve().parents[1]))
 ASSETS=ROOT/'sprite/traps/boulder_chase_v1'
 ROOM_ASSETS=ROOT/'sprite/traps/boulder_room_v2'
 OUTPUT=Path(os.environ.get('BOULDER_OUTPUT',ROOT/'output/boulder_practice'))
@@ -144,7 +144,7 @@ class View:
         assert self.canvas,p.SDL_GetError()
         p.SDL_SetTextureScaleMode(self.canvas,p.SDL_ScaleModeLinear)
         # Reuse the existing corridor planes in this dedicated process only.
-        import trap_view as corridor
+        from SourceCode import trap_view as corridor
         corridor.WIDTH,corridor.HEIGHT,corridor.TOP=w,h,72
         corridor.FOCAL=self.focal
         corridor.TRAP_LENGTH=LENGTH+30
@@ -153,7 +153,7 @@ class View:
         self.planes=corridor.Corridor.__new__(corridor.Corridor)
         self.planes.view=self
         self.vertex=struct.Struct('<ffBBBBff')
-        from boulder_volume import Boulder
+        from .boulder_volume import Boulder
         self.rock=Boulder(self,self.images['raw_boulder'],RADIUS)
 
     def camera(self,g):

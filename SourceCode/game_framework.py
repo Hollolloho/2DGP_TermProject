@@ -20,10 +20,10 @@ def run():
 
     # 화면 없는 검사 설정을 먼저 읽은 다음 SDL을 불러온다.
     import pico2d.pico2d as p
-    from game_view import LW, LH, SCALE
-    from play_mode import PlayMode
+    from .game_view import LW, LH, SCALE
+    from .play_mode import PlayMode
 
-    project = Path(__file__).resolve().parent
+    project = Path(__file__).resolve().parents[1]
     p.open_canvas(LW * SCALE, LH * SCALE, sync=not args.smoke)
     mode = None
     try:
@@ -39,7 +39,7 @@ def run():
             p.SDL_RaiseWindow(p.window)
         mode = PlayMode(project, args)
         if args.smoke:
-            from check_game_render import run as check_render
+            from TestCode.check_game_render import run as check_render
             check_render(mode)
         else:
             run_loop(mode, p)

@@ -41,7 +41,7 @@ class Audio:
         if index!=self.step_index and self.step:
             self.step.play()
         self.step_index=index
-        from maze_model import TRAP_PLANES,TRAP_LENGTH
+        from .maze_model import TRAP_PLANES,TRAP_LENGTH
         near=[i for i,z in enumerate(TRAP_PLANES) if abs(z-game.trap_progress)*TRAP_LENGTH<.8]
         if near and near[0]!=self.whoosh_index:
             self.whoosh_index=near[0]

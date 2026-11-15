@@ -2,19 +2,15 @@
 
 The scenes are scripted fixtures, not recorded human playthroughs.
 """
-import argparse,ctypes,json,math,os,statistics,sys,time
-from pathlib import Path
+import argparse,ctypes,json,math,os,statistics,time
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--native',action='store_true')
     args=parser.parse_args()
-    root=Path(__file__).resolve().parent
-    project=next(parent for parent in (root,*root.parents) if (parent/'boulder_practice.py').exists())
-    os.environ.setdefault('MAZE_PROJECT',str(project));sys.path.insert(0,str(project))
     if not args.native:os.environ['SDL_VIDEODRIVER']='dummy';os.environ['SDL_AUDIODRIVER']='dummy'
     import pico2d.pico2d as p
-    import boulder_practice as current
-    from boulder_volume import stone_mesh
+    from BoulderPractice import boulder_practice as current
+    from BoulderPractice.boulder_volume import stone_mesh
     out=current.OUTPUT/'visuals';out.mkdir(parents=True,exist_ok=True)
     w,h=1440,900
     p.open_canvas(w,h,sync=False)

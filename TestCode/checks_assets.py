@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 import struct
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 DIRECTIONS = ('sw', 'nw', 'se', 'ne')
 ATTACK_DIRECTIONS = (*DIRECTIONS, 'n', 's', 'w', 'e')
 QUARTER = {

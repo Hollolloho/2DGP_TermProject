@@ -7,7 +7,7 @@ import math
 import struct
 import ctypes
 import pico2d.pico2d as p
-from maze_model import TRAP_LENGTH, TRAP_HALF_WIDTH, TRAP_HEIGHT, TRAP_LATERAL, BLADE_RADIUS, TRAP_PLANES, blade_position
+from .maze_model import TRAP_LENGTH, TRAP_HALF_WIDTH, TRAP_HEIGHT, TRAP_LATERAL, BLADE_RADIUS, TRAP_PLANES, blade_position
 
 WIDTH, HEIGHT, TOP = 1280, 800, 60
 FOCAL = 790.0

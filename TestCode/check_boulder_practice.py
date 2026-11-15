@@ -1,7 +1,7 @@
-"""Rules + complete-course checks: python check_boulder_practice.py."""
+"""Rules and complete-course checks: python -m TestCode.check_boulder_practice."""
 import json,math
-from boulder_practice import Practice,OBSTACLES,OUTPUT
-from boulder_volume import stone_mesh,rolled_pose
+from BoulderPractice.boulder_practice import Practice,OBSTACLES,OUTPUT
+from BoulderPractice.boulder_volume import stone_mesh,rolled_pose
 
 def steps(g,seconds,**inputs):
     for _ in range(round(seconds/.02)):g.update(.02,**inputs)

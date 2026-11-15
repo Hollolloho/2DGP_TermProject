@@ -1,15 +1,17 @@
-"""main.py --smoke에서 실행하는 실제 SDL 입력·화면 검사."""
+"""python -m SourceCode.main --smoke에서 실행하는 실제 SDL 입력·화면 검사."""
 import json
 import ctypes
 from bisect import bisect_right
 from itertools import accumulate
+from unittest.mock import patch
 import pico2d.pico2d as p
-from maze_model import DIRECTIONS, TRAP_LENGTH, Game, shortest_path
-from maze_model import PHASE_SECONDS, PHASE_WARNING_SECONDS, SHIFT_SWAP_AT
-from maze_model import WALK_SPEED, RUN_SPEED, PLAYER_HALF_SIZE
-from game_view import LW, LH, SCALE, project
-from trap_view import project as project_trap
-from mouse_maze import BOARD
+from SourceCode.maze_model import DIRECTIONS, TRAP_LENGTH, Game, shortest_path
+from SourceCode.maze_model import PHASE_SECONDS, PHASE_WARNING_SECONDS, SHIFT_SWAP_AT
+from SourceCode.maze_model import WALK_SPEED, RUN_SPEED, PLAYER_HALF_SIZE
+from SourceCode.maze_model import GUARD_DAMAGE
+from SourceCode.game_view import LW, LH, SCALE, project
+from SourceCode.trap_view import project as project_trap
+from SourceCode.mouse_maze import BOARD, MAZE, START_CELL, GOAL_CELL, cell_center
 
 
 def inject_key(key, down=True):
@@ -23,7 +25,10 @@ def inject_key(key, down=True):
 def inject_mouse(event_type, point, held=True):
     event = p.SDL_Event()
     event.type = event_type
-    x, y = (round(coord*SCALE) for coord in point)
+    width, height = ctypes.c_int(), ctypes.c_int()
+    p.SDL_GetWindowSize(p.window, ctypes.byref(width), ctypes.byref(height))
+    x = (int(point[0])*width.value+LW-1)//LW
+    y = (int(point[1])*height.value+LH-1)//LH
     if event_type == p.SDL_MOUSEMOTION:
         event.motion.x, event.motion.y = x, y
         event.motion.state = p.SDL_BUTTON_LMASK if held else 0
@@ -41,7 +46,8 @@ def run(app):
     player = g.player
     step = .025
     w, a, s, d = p.SDLK_w, p.SDLK_a, p.SDLK_s, p.SDLK_d
-    diagonals = ((s, a), (w, a), (s, d), (w, d))  # DIRECTIONS order
+    grid_keys = (a, w, s, d)  # DIRECTIONS order
+    north, south, west, east = (w, d), (s, a), (w, a), (s, d)
 
     def press(*keys, ticks=0, timesteps=None, track_camera=False):
         for key in keys:
@@ -62,9 +68,9 @@ def run(app):
         press(*keys, timesteps=[seconds/ticks]*ticks)
 
     def walk_path(start, end):
-        path = shortest_path(g.grid, start, end)
+        path = shortest_path(app.game.grid, start, end)
         for (x, y), (nx, ny) in zip(path, path[1:]):
-            walk_tile(*diagonals[DIRECTIONS.index((nx-x, ny-y))])
+            walk_tile(grid_keys[DIRECTIONS.index((nx-x, ny-y))])
 
     def click_attack():
         event = p.SDL_Event()
@@ -73,55 +79,260 @@ def run(app):
         assert p.SDL_PushEvent(event) == 1
         app.handle_events()
 
+    def check_puzzle_approaches():
+        view = app.view
+        room = Game(117, 2, player_clips=view.player_catalog['clips'])
+        app.game = room
+        wall, near, far = room.puzzle_gate
+        assert room.phase == 2 and (near, far) == ((17, 5), (17, 7))
+        hint = 'F  마우스 미로'
+        interact = p.SDLK_f
+
+        def HUD_text():
+            with patch.object(view, 'text', wraps=view.text) as text:
+                view.draw(room)
+            return {call.args[0] for call in text.call_args_list}
+
+        try:
+            for approach, position in ((near, (17.5, 5.5)), (far, (17.28, 7.21))):
+                room.player.x, room.player.y = position
+                room.update_visibility()
+                assert wall in room.visible and approach in room.visible
+                with patch.object(view, 'badge', wraps=view.badge) as badge:
+                    assert hint in HUD_text()
+                sx, sy = view.world(approach[0]+.5, approach[1]+.5)
+                assert [call.args[1:3] for call in badge.call_args_list if call.args[0] == 'P'] == [
+                    (sx-12*view.world_scale, sy)]
+
+                press(interact)
+                assert room.state == 'puzzle' and hint not in HUD_text()
+                press(p.SDLK_ESCAPE)
+                assert room.state == 'explore'
+
+            press(p.SDLK_m)
+            press(interact)
+            assert room.map_open and room.state == 'explore' and hint not in HUD_text()
+            press(p.SDLK_m)
+
+            room.puzzle_reserved_phase = room.next_phase
+            press(interact)
+            assert room.state == 'explore' and hint not in HUD_text()
+            room.puzzle_reserved_phase = None
+            room.puzzle_open = True
+            room.grid[wall[1]][wall[0]] = 0
+            press(interact)
+            assert room.state == 'explore' and hint not in HUD_text()
+            print('PASS: SDL dawn puzzle P and F at both sides, exact far position, Esc, map, reserved and open gates.')
+        finally:
+            app.game = g
+            app.held.clear()
+
     def check_puzzle_input():
         room = Game(117, player_clips=app.view.player_catalog['clips'])
         app.game = room
         wall, near, far = room.puzzle_gate
-        room.player.x, room.player.y = near[0]+.5, near[1]+.5
-        room.update_visibility()
         left, top, size = BOARD
-        center = lambda x, y: (left+(x+.5)*size, top+(y+.5)*size)
-        start, corner, goal = center(1, 1), center(3, 1), center(7, 1)
+        center = cell_center
+        start, corner, goal = center(*START_CELL), center(3, 1), center(*GOAL_CELL)
+        below = center(3, 3)
+        preview = (corner[0], corner[1]+12)
+        resized = (corner[0], corner[1]+21)
         down, motion, up = p.SDL_MOUSEBUTTONDOWN, p.SDL_MOUSEMOTION, p.SDL_MOUSEBUTTONUP
 
         def mouse(kind, point, held=True):
             inject_mouse(kind, point, held)
             app.handle_events()
 
+        def puzzle_pixels(rect):
+            pixels = (ctypes.c_uint32*(rect.w*rect.h))()
+            app.view.draw(room)
+            app.view.select_readback_target()
+            try:
+                assert p.SDL_RenderReadPixels(p.renderer, rect, p.SDL_PIXELFORMAT_RGBA32,
+                                              pixels, rect.w*4) == 0
+                return pixels
+            finally:
+                p.SDL_SetRenderTarget(p.renderer, None)
+
+        def check_route(active, inactive):
+            def at(point):
+                rect = p.SDL_Rect(point[0]*SCALE, point[1]*SCALE, 1, 1)
+                return puzzle_pixels(rect)[0]
+
+            for point, should_change in [(point, True) for point in active]+[(point, False) for point in inactive]:
+                foreground = at(point)
+                with patch.object(app.view, 'puzzle_route'):
+                    background = at(point)
+                assert (foreground != background) == should_change, point
+
+        def floor_pixels(*cells):
+            board = p.SDL_Rect(left*SCALE, top*SCALE, len(MAZE[0])*size*SCALE, len(MAZE)*size*SCALE)
+            pixels = puzzle_pixels(board)
+            samples = []
+            for x, y in cells:
+                cx, cy = center(x, y)
+                # Sample the same point within each tile, away from its trace, marker and label.
+                index = ((cy-top-8)*board.w+cx-left+8)*SCALE
+                samples.append(pixels[index])
+            return tuple(samples)
+
         try:
+            walk_path(room.spawn, near)
+            assert (int(room.player.x), int(room.player.y)) == near
             press(p.SDLK_f)
             assert room.state == 'puzzle'
             app.view.draw(room)
             press(ticks=12)
-            app.view.draw(room)
+            check_route([start], [corner])
+            first_floor = START_CELL, (2, 1)
+            bend_floors = (3, 1), (3, 2), (3, 3)
+            fixed_tiles = (4, 1), GOAL_CELL
+            initial_start, initial_next = floor_pixels(*first_floor)
+            bend_baseline = floor_pixels(*bend_floors)
+            fixed_baseline = floor_pixels(*fixed_tiles)
             app.view.capture(output/'puzzle-preview.png')
             press(w, p.SDLK_m, ticks=4)
             assert room.phase_time > 0 and not room.map_open and not app.held
             mouse(down, start)
-            mouse(motion, goal)
-            assert room.puzzle.hit_wall and room.player.hp == 100
-            mouse(up, goal)
-            mouse(down, start)
+            mouse(motion, (start[0]+size//2, start[1]))
+            middle_start, middle_next = floor_pixels(*first_floor)
+            mouse(motion, center(2, 1))
+            moved_start, moved_next = floor_pixels(*first_floor)
+            # SDL's RGBA32 exposes the red byte first, and the gold tint increases it.
+            assert (moved_start & 255) < (middle_start & 255) < (initial_start & 255)
+            assert (initial_next & 255) < (middle_next & 255) < (moved_next & 255)
+            mouse(motion, (167, 207))  # 입구 안쪽의 벽을 가로지르지 않는다.
+            assert room.puzzle.hit_wall and room.puzzle.cursor == center(2, 1)
+            assert floor_pixels(*first_floor) == (moved_start, moved_next)
+            mouse(motion, center(3, 2))
+            assert room.puzzle.hit_wall and room.puzzle.cursor == center(2, 1)
+            rounded = ((170, 185), (175, 186), (179, 190), (182, 197), (182, 199),
+                       (182, 202), (182, 209), (182, 219), (182, 226))
+            previous = sum(room.puzzle.cursor)
+            for point in rounded:
+                mouse(motion, point)
+                x, y = room.puzzle.cursor
+                assert not room.puzzle.hit_wall and x+y > previous, (point, (x, y))
+                assert (151 <= x <= 185 and y == 185) or (x == 185 and 185 <= y <= 226)
+                previous = x+y
+            assert room.puzzle.cursor == (185, 226) and room.puzzle.cell == (3, 2)
+            check_route([(164, 185), corner, (185, 226)], [(176, 198), (193, 226)])
+            linked_start, linked_next = floor_pixels(*first_floor)
+            assert linked_start == moved_start
+            assert (initial_next & 255) < (linked_next & 255) < (moved_next & 255)
+            past_corner, active_bend, following_bend = floor_pixels(*bend_floors)
+            assert (past_corner & 255) > (bend_baseline[0] & 255)
+            assert (active_bend & 255) > (bend_baseline[1] & 255)
+            assert (following_bend & 255) > (bend_baseline[2] & 255)
+            assert floor_pixels(*fixed_tiles) == fixed_baseline
             mouse(motion, corner)
+            assert room.puzzle.path == [START_CELL, (2, 1), (3, 1)]
+            route_floors = (*first_floor, *bend_floors)
+            glow_before_wall = floor_pixels(*route_floors)
+            for invalid in (goal, center(5, 3), (left-1, corner[1])):
+                mouse(motion, invalid)
+                assert room.puzzle.hit_wall and room.player.hp == 100
+                assert room.puzzle.path == [START_CELL, (2, 1), (3, 1)]
+                assert room.puzzle.dragging and room.puzzle.cursor == corner
+            assert floor_pixels(*route_floors) == glow_before_wall
+            mouse(motion, (preview[0]+4, preview[1]))
+            assert room.puzzle.cell == (3, 1) and room.puzzle.cursor == preview
+            assert room.puzzle.preview_cell == (3, 2) and not room.puzzle.hit_wall
+            mid = (corner[0]-size//2, corner[1])
+            check_route([mid, preview], [(preview[0]+8, preview[1]), center(3, 2)])
+            app.view.capture(output/'puzzle-dragged.png')
+            try:
+                p.SDL_SetWindowSize(p.window, 960, 600)
+                mouse(motion, (resized[0]-4, resized[1]))
+                assert room.puzzle.cell == (3, 1) and room.puzzle.cursor == resized
+                check_route([mid, resized], [(resized[0]-8, resized[1]), center(3, 2)])
+            finally:
+                p.SDL_SetWindowSize(p.window, LW*SCALE, LH*SCALE)
+            paused_glow = floor_pixels(*route_floors)
             mouse(up, goal)
-            mouse(motion, center(3, 3), False)
-            assert room.puzzle.point == corner and not room.puzzle.dragging
-            mouse(down, corner)
+            mouse(motion, below, False)
+            assert room.puzzle.cell == (3, 1) and not room.puzzle.dragging
+            assert room.puzzle.cursor == resized and room.puzzle.preview_cell == (3, 2)
+            check_route([mid, resized], [center(3, 2)])
+            assert floor_pixels(*route_floors) == paused_glow
+            mouse(down, goal)
+            assert not room.puzzle.dragging
+            mouse(up, goal)
+            mouse(down, resized)
+            assert room.puzzle.dragging
+            assert floor_pixels(*route_floors) == paused_glow
             lost = p.SDL_Event()
             lost.type = p.SDL_WINDOWEVENT
             lost.window.event = p.SDL_WINDOWEVENT_FOCUS_LOST
             assert p.SDL_PushEvent(lost) == 1
             app.handle_events()
-            mouse(motion, center(3, 3))
-            assert room.puzzle.point == corner and not room.puzzle.dragging
-            mouse(up, corner)
+            mouse(motion, below)
+            assert room.puzzle.cell == (3, 1) and not room.puzzle.dragging
+            assert room.puzzle.cursor == resized and room.puzzle.preview_cell == (3, 2)
+            mouse(up, resized)
+            mouse(down, resized)
             press(p.SDLK_ESCAPE)
-            assert app.running and room.state == 'explore' and room.puzzle.point == corner
+            assert app.running and room.state == 'explore' and room.puzzle.cell == (3, 1)
+            assert not room.puzzle.dragging and room.puzzle.cursor == resized
+            mouse(up, resized)
             press(p.SDLK_f)
-            mouse(down, corner)
-            for point in (center(3, 3), center(5, 3), center(5, 1), goal):
+            assert room.state == 'puzzle'
+            assert floor_pixels(*route_floors) == paused_glow
+            mouse(down, resized)
+            room.guard = (near[0], near[1]-2)
+            before_hit = room.player.hp
+            saved_path = room.puzzle.path[:]
+            for _ in range(100):
+                app.update(step)
+                if room.state != 'puzzle':
+                    break
+            assert room.state == 'explore' and room.player.hp == before_hit-GUARD_DAMAGE
+            assert not room.puzzle.dragging and room.puzzle.path == saved_path
+            assert room.puzzle.cursor == resized and room.puzzle.preview_cell == (3, 2)
+            assert app.puzzle_mouse_held and not app.held
+            mouse(motion, below)
+            mouse(down, below)
+            assert room.puzzle.path == saved_path and not room.attack_hits_ms
+            mouse(up, below)
+            press(p.SDLK_f)
+            assert room.state == 'puzzle' and room.puzzle.cursor == resized
+            mouse(down, resized)
+            mouse(motion, corner)
+            active_corner = floor_pixels((3, 1))[0]
+            mouse(motion, (corner[0]-size//4, corner[1]))
+            early_retraction = floor_pixels((3, 1))[0]
+            mouse(motion, mid)
+            assert room.puzzle.cell == (3, 1) and room.puzzle.preview_cell == (2, 1)
+            retracting_corner = floor_pixels((3, 1))[0]
+            assert ((bend_baseline[0] & 255) < (retracting_corner & 255) < (past_corner & 255)
+                    < (early_retraction & 255) < (active_corner & 255))
+            check_route([start, mid], [corner, resized])
+            mouse(motion, center(2, 1))
+            assert room.puzzle.cell == (2, 1) and room.puzzle.path == [START_CELL, (2, 1)]
+            assert floor_pixels(*bend_floors) == bend_baseline
+            assert floor_pixels(*first_floor) == (linked_start, moved_next)
+            check_route([start], [mid, corner, resized])
+            for point, projected in (
+                    (corner, corner), ((185, 247), (185, 247)), ((190, 254), (190, 253)),
+                    ((247, 253), (247, 253)), ((253, 259), (253, 253)),
+                    ((269, 244), (253, 244)), ((253, 198), (253, 198)),
+                    ((236, 184), (253, 185)), ((252, 181), (253, 185))):
                 mouse(motion, point)
+                assert not room.puzzle.hit_wall and room.puzzle.cursor == projected, (point, room.puzzle.cursor)
+                if point in ((190, 254), (253, 259), (269, 244)):
+                    for invalid in ((point[0], 270), center(6, 1)):
+                        mouse(motion, invalid)
+                        assert room.puzzle.hit_wall and room.puzzle.cursor == projected
+            check_route([(185, 253), (220, 253), (253, 244), (253, 185)],
+                        [(253, 270), (269, 244), (236, 184), center(6, 1)])
+            mouse(motion, (264, 192))
+            assert room.puzzle.cursor == (264, 185) and room.puzzle.preview_cell == (6, 1)
+            check_route([(253, 211), (259, 185), (264, 185)], [(264, 192), center(6, 1)])
+            mouse(motion, (264, 194))
+            assert not room.puzzle.hit_wall and room.puzzle.cursor == (264, 185)
+            mouse(motion, (304, goal[1]))
             assert room.state == 'explore' and room.puzzle_reserved_phase == 1 and room.solid(*wall)
+            assert room.puzzle.path == [START_CELL] and not room.puzzle.dragging
             mouse(down, goal)  # A duplicate down before release must not become an attack.
             assert not room.attack_hits_ms
             mouse(up, goal)
@@ -134,15 +345,16 @@ def run(app):
             app.view.draw(room)
             assert app.view.light_revision == room.layout_revision
             app.view.capture(output/'puzzle-open.png')
-            walk_tile(s, a)
+            walk_tile(a)
             assert (int(room.player.x), int(room.player.y)) == wall
-            walk_tile(s, a)
+            walk_tile(a)
             assert (int(room.player.x), int(room.player.y)) == far
             press(p.SDLK_r)
             fresh = app.game
             assert fresh.run_number == 1 and fresh.solid(*fresh.puzzle_gate[0])
             assert not fresh.puzzle_open and fresh.puzzle_reserved_phase is None
-            print('PASS: SDL mouse maze input, focus/release/resume, reservation, drawn opening, traversal and R reset.')
+            assert fresh.puzzle.cell == START_CELL and not fresh.puzzle.dragging
+            print('PASS: SDL moving glow and retained trail, rounded corners, projected route at two sizes, backtracking, resume, opening and R reset.')
         finally:
             app.game = g
             app.held.clear()
@@ -150,10 +362,10 @@ def run(app):
 
     def check_dagger_timeline(room):
         view = app.view
-        commands = (('n', (w,), (-1, -1)), ('s', (s,), (1, 1)),
-                    ('w', (a,), (-1, 1)), ('e', (d,), (1, -1)),
-                    ('nw', (w, a), (-1, 0)), ('ne', (w, d), (0, -1)),
-                    ('sw', (s, a), (0, 1)), ('se', (s, d), (1, 0)))
+        commands = (('n', north, (-1, -1)), ('s', south, (1, 1)),
+                    ('w', west, (-1, 1)), ('e', east, (1, -1)),
+                    ('nw', (w,), (-1, 0)), ('ne', (d,), (0, -1)),
+                    ('sw', (a,), (0, 1)), ('se', (s,), (1, 0)))
         fx_starts = view.dagger_fx['frame_starts_ms']
         assert fx_starts == [200, 217, 233, 250, 267, 283, 300, 317, 333, 350, 367, 383]
         # 각 검격의 프레임 중앙과 타격 경계 전후를 검사한다.
@@ -266,14 +478,15 @@ def run(app):
         room.grid = [[0]*len(row) for row in room.grid]
         room.player.x, room.player.y = 15.5, 11.5
         room.guard = (15, 12)
+        room.update_guard = lambda _dt: None
         app.game = room
         try:
-            press(s, a, ticks=1)
+            press(a, ticks=1)
             click_attack()
             clip = room.player_clips['attack-sw']
             assert room.attack_facing == 'sw' and room.guard_hp == 3
             assert app.view.player_frame(room) == clip['frames'][0]['rect']
-            press(w, d, ticks=1)
+            press(d, ticks=1)
             assert room.player.screen_facing == 'ne' and room.attack_facing == 'sw'
             assert app.view.player_frame(room) == clip['frames'][0]['rect']
             view = app.view
@@ -296,7 +509,7 @@ def run(app):
                     ('moving-attack', (148, 86, 64, 64), walk_sw['leg_layer_rects'][leg_index]),
                     ('moving-attack', (148, 86, 64, 64), clip['upper_layer_rects'][0]),
                 ]
-                press(w, d, timesteps=[.05]*14+[.026])
+                press(d, timesteps=[.05]*14+[.026])
                 assert room.attack_time >= .75 and room.player.screen_facing == 'ne'
                 assert room.guard_hp == 3
                 calls.clear()
@@ -312,7 +525,7 @@ def run(app):
                 room.guard = guard
                 view.image, view.effect, view.world_scale = image, effect, old_scale
             room.player.x, room.player.y = 15.5, 11.5
-            press(s, a, ticks=1)
+            press(a, ticks=1)
             click_attack()
             hit = next(event for event in clip['events'] if event['name'] == 'hit')
             before_hit = hit['at_ms']/1000-room.attack_time-.001
@@ -334,6 +547,7 @@ def run(app):
     def check_controls():
         room = Game(g.seed, player_clips=app.view.player_catalog['clips'])
         room.grid = [[0] * len(row) for row in room.grid]
+        room.guard_hp = 0
         actor = room.player
         actor.x, actor.y = 15.5, 11.5
         app.game = room
@@ -367,20 +581,33 @@ def run(app):
             assert view.player_frame(room) in [frame['rect'] for frame in clip['frames']]
 
         try:
-            for keys, (sx, sy, facing) in zip(diagonals,
+            actor.x, actor.y = 6.5, 6.5
+            assert not any(room.close_to(cell) for cell in
+                           (room.torch_cell, room.trap_cell, room.fountain, room.exit))
+            assert not room.puzzle_available()
+            inject_key(d)
+            app.handle_events()
+            app.update(step)
+            before_f = actor.x, actor.y
+            press(p.SDLK_f, ticks=1)
+            assert room.state == 'explore' and not actor.torch and d in app.held
+            assert actor.x == before_f[0] and isclose(actor.y-before_f[1], -2.5*step)
+            inject_key(d, down=False)
+            app.handle_events()
+            for key, (sx, sy, facing) in zip(grid_keys,
                     ((-1, 1, 0), (-1, -1, 1), (1, 1, 2), (1, -1, 3))):
-                check_move(keys, sx, sy, facing)
-                check_move((*keys, p.SDLK_LSHIFT), sx, sy, facing, running=True)
-            for key, sx, sy, facing in ((w, 0, -1, 3), (a, -1, 0, 1),
-                                         (s, 0, 1, 0), (d, 1, 0, 2)):
+                check_move((key,), sx, sy, facing)
+                check_move((key, p.SDLK_LSHIFT), sx, sy, facing, running=True)
+            for keys, sx, sy, facing in ((north, 0, -1, 3), (west, -1, 0, 1),
+                                         (south, 0, 1, 0), (east, 1, 0, 2)):
                 actor.direction = facing
-                check_move((key,), sx, sy, facing)
-                check_move((key,), sx, sy, facing)
+                check_move(keys, sx, sy, facing)
+                check_move(keys, sx, sy, facing)
 
-            # Releasing one key of an up-right chord retains the compatible facing.
-            check_move((w, d), 1, -1, 3)
-            check_move((d,), 1, 0, 3)
-            check_move((w, s, d), 1, 0, 3)
+            # 동쪽 동시 입력은 현재 진행 방향이 두 축 중 하나면 그 방향을 유지한다.
+            check_move((d,), 1, -1, 3)
+            check_move(east, 1, 0, 3)
+            check_move((w, s, d), 1, -1, 3)
             start = actor.x, actor.y, actor.direction
             for keys in ((w, s), (a, d), (p.SDLK_UP,), (p.SDLK_LEFT,),
                          (p.SDLK_DOWN,), (p.SDLK_RIGHT,)):
@@ -394,8 +621,8 @@ def run(app):
                 '120 FPS': [1/120]*120,
                 'variable': [1/120, 1/40, 1/60, 1/20]*10,
             }
-            commands = (((w,), 0, -1), ((a,), -1, 0), ((s,), 0, 1), ((d,), 1, 0),
-                        ((w, a), -2, -1), ((w, d), 2, -1), ((s, a), -2, 1), ((s, d), 2, 1))
+            commands = ((north, 0, -1), (west, -1, 0), (south, 0, 1), (east, 1, 0),
+                        ((w,), -2, -1), ((d,), 2, -1), ((a,), -2, 1), ((s,), 2, 1))
             max_speed_error = 0.
 
             def reset(x=15.5, y=11.5, direction=0):
@@ -433,15 +660,16 @@ def run(app):
                             press(ticks=1)
                             assert (actor.x, actor.y) == stopped and actor.state == 'idle'
 
-            # 한 칸 통로에서 단일 키는 벽 직전까지 직선 이동하고 멈춘다.
+            # 한 칸 통로에서 벽을 향한 동시 입력은 벽 직전에 멈춘다.
             room.reveal_all = False
             room.grid = [[int(x != 15) for x in range(len(row))] for row in room.grid]
             clearance = .5-PLAYER_HALF_SIZE
             for times in schedules.values():
                 for running in (False, True):
-                    for key, gx, gy in ((w, -1, -1), (a, -1, 1), (s, 1, 1), (d, 1, -1)):
+                    for keys, gx, gy in ((north, -1, -1), (west, -1, 1),
+                                         (south, 1, 1), (east, 1, -1)):
                         reset()
-                        chord = (key, p.SDLK_LSHIFT) if running else (key,)
+                        chord = (*keys, p.SDLK_LSHIFT) if running else keys
                         press(*chord, timesteps=times)
                         assert isclose(actor.x-15.5, gx*clearance, abs_tol=2e-7)
                         assert isclose(actor.y-11.5, gy*clearance, abs_tol=2e-7)
@@ -449,10 +677,10 @@ def run(app):
                         stopped = actor.x, actor.y
                         press(*chord, ticks=8)
                         assert (actor.x, actor.y) == stopped and actor.state == 'idle'
-                    # 벽에 거의 닿아 있어도 통로와 평행한 두 키 입력은 계속 이동한다.
-                    for keys, sign in (((s, a), 1), ((w, d), -1)):
+                    # 벽에 거의 닿아 있어도 통로와 평행한 단일 키 입력은 계속 이동한다.
+                    for key, sign in ((a, 1), (d, -1)):
                         reset(x=15.79-1e-7)
-                        chord = (*keys, p.SDLK_LSHIFT) if running else keys
+                        chord = (key, p.SDLK_LSHIFT) if running else (key,)
                         press(*chord, timesteps=times)
                         assert actor.x == 15.79-1e-7
                         speed = RUN_SPEED if running else WALK_SPEED
@@ -460,7 +688,7 @@ def run(app):
                         assert room.can_stand(actor.x, actor.y)
 
             # 끝점은 안전하지만 중간에 모퉁이를 스치는 경로도 4방향 모두 막아야 한다.
-            for turns, key in enumerate((s, a, w, d)):
+            for turns, keys in enumerate((south, west, north, east)):
                 room.grid = [[0]*len(row) for row in room.grid]
                 px, py, wx, wy, gx, gy = .28, .695, 1., 0., 1., 1.
                 for _ in range(turns):
@@ -471,7 +699,7 @@ def run(app):
                     reset(start_x, start_y)
                     proposed = .05*WALK_SPEED/hypot(*project(gx, gy))
                     assert room.can_stand(start_x+gx*proposed, start_y+gy*proposed)
-                    press(key, timesteps=times)
+                    press(*keys, timesteps=times)
                     assert isclose(actor.x-start_x, gx*.01, abs_tol=2e-7)
                     assert isclose(actor.y-start_y, gy*.01, abs_tol=2e-7)
                     assert room.can_stand(actor.x, actor.y) and actor.state == 'idle'
@@ -479,11 +707,11 @@ def run(app):
             # L자 통로의 모서리를 가로지르지 않고, 통로 축을 따라 꺾어서 통과한다.
             room.grid = [[int(not (x == 15 or y == 11)) for x in range(len(row))] for y, row in enumerate(room.grid)]
             reset(15.5, 10.5)
-            press(s, ticks=16)
+            press(*south, ticks=16)
             assert actor.x < 15.8 and actor.y < 10.8
             reset(15.5, 10.5)
-            walk_tile(s, a)
-            walk_tile(s, d)
+            walk_tile(a)
+            walk_tile(s)
             assert isclose(actor.x, 16.5) and isclose(actor.y, 11.5)
             assert room.can_stand(actor.x, actor.y)
 
@@ -491,9 +719,9 @@ def run(app):
             room.grid = [[0]*len(row) for row in room.grid]
             walk_schedules = {'20 FPS': [.05]*16}
             walk_schedules.update({name: times[:round(len(times)*.8)] for name, times in schedules.items()})
-            cardinal = ((w, 'n', 'north', 0, -1), (s, 's', 'south', 0, 1),
-                        (a, 'w', 'west', -1, 0), (d, 'e', 'east', 1, 0))
-            for key, facing, label, sx, sy in cardinal:
+            cardinal = ((north, 'n', 'north', 0, -1), (south, 's', 'south', 0, 1),
+                        (west, 'w', 'west', -1, 0), (east, 'e', 'east', 1, 0))
+            for keys, facing, label, sx, sy in cardinal:
                 walk_name, idle_name = f'walk-{facing}', f'idle-{facing}'
                 walk = clips[walk_name]
                 assert len(walk['frames']) == 16 and walk['durations_ms'] == [50]*16
@@ -501,7 +729,8 @@ def run(app):
                 for schedule, times in walk_schedules.items():
                     reset()
                     actor.gait_phase = actor.gait_distance = 0.
-                    inject_key(key)
+                    for key in keys:
+                        inject_key(key)
                     app.handle_events()
                     elapsed = 0.
                     seen = set()
@@ -523,13 +752,14 @@ def run(app):
                     dx, dy = project(actor.x-15.5, actor.y-11.5)
                     assert isclose(dx, sx*WALK_SPEED*.8, abs_tol=1e-8)
                     assert isclose(dy, sy*WALK_SPEED*.8, abs_tol=1e-8)
-                    inject_key(key, down=False)
+                    for key in keys:
+                        inject_key(key, down=False)
                     app.handle_events()
                     press(ticks=1)
                     assert room.locomotion_clip_name('idle') == idle_name
                     assert view.player_frame(room) == clips[idle_name]['frames'][0]['rect']
                 print(f'PASS: {walk_name} 16 frames in 0.8s at 20/30/60/120 FPS and variable dt, projected speed and {idle_name} on release.')
-            print('PASS: W/S/A/D select all four cardinal idle poses on release.')
+            print('PASS: four orthogonal screen chords select their cardinal idle poses on release.')
             print(f'PASS: 256 SDL speed cases (30/60/120 FPS + variable dt), max error {max_speed_error:.3g} px/s; straight wall stops, swept corners, narrow corridors and immediate release.')
         finally:
             app.game = g
@@ -541,6 +771,87 @@ def run(app):
         for _ in range(16): app.update(.025)
         app.view.draw(g)
         app.view.capture(output/name)
+
+    def check_shortcut_visibility():
+        view = app.view
+        original_seed = app.seed
+
+        def body_pixels(room, target, scale):
+            x, y = view.world(room.player.x, room.player.y)
+            pivot_x, pivot_y = view.player_catalog['pivot']
+            width, height = view.player_catalog['frame_size']
+            rect = p.SDL_Rect((round(x)-pivot_x)*scale, (round(y)-pivot_y)*scale,
+                              width*scale, height*scale)
+            pixels = (ctypes.c_uint32*(rect.w*rect.h))()
+            if target is view.display:
+                view.select_readback_target()
+            else:
+                p.SDL_SetRenderTarget(p.renderer, target)
+            try:
+                assert p.SDL_RenderReadPixels(p.renderer, rect, p.SDL_PIXELFORMAT_RGBA32, pixels, rect.w*4) == 0
+                return pixels[:]
+            finally:
+                p.SDL_SetRenderTarget(p.renderer, None)
+
+        def coverage(room, silhouette=True):
+            def capture():
+                p.SDL_SetRenderTarget(p.renderer, view.logical)
+                view.quarter(room)
+                return body_pixels(room, view.logical, 1)
+
+            with patch.object(view, 'player_silhouette'), patch.object(view, 'player'):
+                background = capture()
+            if silhouette:
+                foreground = capture()
+            else:
+                with patch.object(view, 'player_silhouette'):
+                    foreground = capture()
+            return sum(a != b for a, b in zip(foreground, background))
+
+        try:
+            app.seed = 117
+            app.game = Game(117, player_clips=view.player_catalog['clips'])
+            for run, exit_cell, resting, facing in (
+                    (0, (20, 11), (20.1875, 11+PLAYER_HALF_SIZE), 'ne'),
+                    (1, (25, 7), (25.24844235, 7.23167184), 'e')):
+                if run:
+                    press(p.SDLK_r)
+                room = app.game
+                actor = room.player
+                assert room.run_number == run and room.trap_exit == exit_cell and not actor.torch
+                actor.x, actor.y = room.trap_cell[0]+.5, room.trap_cell[1]+.5
+                press(p.SDLK_f)
+                assert room.state == 'trap'
+                view.draw(room)
+                press(w, ticks=300)
+                assert room.state == 'explore' and room.trap_completed and not actor.torch
+                assert (actor.x, actor.y) == (exit_cell[0]+.5, exit_cell[1]+.5)
+                view.draw(room)
+                assert any(pixel & 0xffffff for pixel in body_pixels(room, view.display, SCALE)), 'black return frame'
+
+                if run:
+                    press(*north, timesteps=[.025, .025, .025, .018])
+                    press(*east, timesteps=[.006])
+                else:
+                    press(w, ticks=5)
+                    press(d, ticks=5)
+                press(ticks=1)
+                assert all(isclose(actual, expected, abs_tol=1e-6)
+                           for actual, expected in zip((actor.x, actor.y), resting))
+                assert actor.state == 'idle' and actor.screen_facing == facing
+                assert room.can_stand(actor.x, actor.y) and room.solid(exit_cell[0], exit_cell[1]-1)
+                pose = actor.x, actor.y, actor.state, actor.screen_facing
+                occluded = coverage(room, silhouette=False)
+                with patch.object(view, 'shortcut'):
+                    without_arch = coverage(room, silhouette=False)
+                readable = coverage(room)
+                assert without_arch > occluded+80 and readable > occluded+150 and readable >= 300, (
+                    run, occluded, without_arch, readable)
+                assert (actor.x, actor.y, actor.state, actor.screen_facing) == pose
+                print(f'PASS: B{exit_cell} post-return body pixels {occluded} → {readable} with silhouette.')
+        finally:
+            app.game, app.seed = g, original_seed
+            app.held.clear()
 
     def check_phase_render():
         """실제 SDL 키로 전환·통과·함정 복귀·R을 확인하고 비교 프레임을 남긴다."""
@@ -565,7 +876,7 @@ def run(app):
             # 같은 변형 구간의 HUD 픽셀이 진동으로 이동하지 않는지 검사한다.
             rect = p.SDL_Rect(512*SCALE, 30*SCALE, 128*SCALE, 340*SCALE)
             pixels = (ctypes.c_ubyte*(rect.w*rect.h*4))()
-            p.SDL_SetRenderTarget(p.renderer, app.view.display)
+            app.view.select_readback_target()
             try:
                 assert p.SDL_RenderReadPixels(p.renderer, rect, p.SDL_PIXELFORMAT_RGBA32, pixels, rect.w*4) == 0
                 return bytes(pixels)
@@ -625,7 +936,7 @@ def run(app):
             assert (room.time, room.attack_time, room.player.stamina) == world
             frame('06-new-layout.png')
             direction = DIRECTIONS.index((opened[0]-entry[0], opened[1]-entry[1]))
-            walk_tile(*diagonals[direction])
+            walk_tile(grid_keys[direction])
             assert all(isclose(value, cell+.5) for value, cell in zip((room.player.x, room.player.y), opened))
             frame('07-open-passage-walked.png')
 
@@ -702,7 +1013,7 @@ def run(app):
                 app.update(.05)
             assert closed in room.visible and behind not in room.visible
             assert behind not in room.observed and behind not in room.visited
-            walk_tile(*diagonals[DIRECTIONS.index((dx, dy))])
+            walk_tile(grid_keys[DIRECTIONS.index((dx, dy))])
             assert (int(room.player.x), int(room.player.y)) == near
             assert room.can_stand(room.player.x, room.player.y)
             frame('10-closed-wall-blocks.png')
@@ -720,16 +1031,29 @@ def run(app):
     snapshot('01-directional-view.png')
     check_controls()
     check_attack_render()
+    check_puzzle_approaches()
     check_puzzle_input()
-    from checks_gait import check_gait_view
+    from .checks_gait import check_gait_view
     check_gait_view(app.view)
     app.view.draw(g)
     start_screen = app.view.world(player.x, player.y)
     walk_path(g.spawn, g.torch_cell)
     assert all(isclose(position, cell+.5) for position, cell in zip((player.x, player.y), g.torch_cell))
     assert player.state == 'walk'
-    press(p.SDLK_f)
-    assert player.torch
+    torch_next = shortest_path(g.grid, g.torch_cell, g.trap_cell)[1]
+    torch_step = tuple(end-start for start, end in zip(g.torch_cell, torch_next))
+    torch_key = grid_keys[DIRECTIONS.index(torch_step)]
+    inject_key(torch_key)
+    app.handle_events()
+    before_f = player.x, player.y
+    press(p.SDLK_f, ticks=1)
+    assert g.state == 'explore' and player.torch and torch_key in app.held
+    assert all(isclose(end-start, direction*2.5*step, abs_tol=1e-9)
+               for start, end, direction in zip(before_f, (player.x, player.y), torch_step))
+    inject_key(torch_key, down=False)
+    app.handle_events()
+    press(grid_keys[DIRECTIONS.index(tuple(-n for n in torch_step))], ticks=1)
+    assert all(isclose(actual, expected) for actual, expected in zip((player.x, player.y), before_f))
     app.view.draw(g)
     assert app.view.world(player.x, player.y) != start_screen
     app.view.capture(output/'01b-quarter-moved.png')
@@ -748,8 +1072,13 @@ def run(app):
     walk_path(g.torch_cell, g.trap_cell)
     before = player.x, player.y
     assert all(isclose(position, cell+.5) for position, cell in zip(before, g.trap_cell))
-    press(p.SDLK_f)
-    assert g.state=='trap'
+    inject_key(w)
+    app.handle_events()
+    press(p.SDLK_f, ticks=4)
+    assert g.state=='trap' and not app.held
+    assert g.trap_progress == g.trap_velocity == 0
+    inject_key(w, down=False)
+    app.handle_events()
     fixed_center = project_trap(g, 0, 0, TRAP_LENGTH)
     press(w, ticks=20)
     closer = project_trap(g, 0, 0, TRAP_LENGTH)
@@ -775,12 +1104,14 @@ def run(app):
     assert g.state == 'explore' and g.trap_completed and g.trap_exit in g.visited
     assert (player.x, player.y) == (g.trap_exit[0]+.5, g.trap_exit[1]+.5)
     snapshot('06-quarter-return-b.png')
+    check_shortcut_visibility()
     check_phase_render()
     app.save_status()
     (output/'render_checks.json').write_text(json.dumps({'native_renderer':'pico2d + SDL2',
         'window_size':[LW*SCALE,LH*SCALE],'logical_quarter_view':[LW,LH],
-        'sdl_F_torch':True,'sdl_V_overview':True,'sdl_M_map':True,
-        'sdl_WASD_move':True,'sdl_WASD_diagonal_walk_run':True,
+        'sdl_F_torch':True,'sdl_F_preserves_walk':True,'sdl_F_clears_on_transition':True,
+        'sdl_V_overview':True,'sdl_M_map':True,
+        'sdl_WASD_corridor_walk_run':True,'sdl_WASD_chord_screen_directions':True,
         'sdl_east_walk_16_frames':True,'sdl_east_idle_on_release':True,
         'sdl_north_walk_16_frames':True,'sdl_south_walk_16_frames':True,'sdl_west_walk_16_frames':True,
         'sdl_cardinal_idle_on_release':True,
@@ -789,7 +1120,9 @@ def run(app):
         'sdl_trap_WASD':True,
         'sdl_F_trap':True,'sdl_W_fixed_first_person':True,
         'sdl_Esc_exact_return':True,'sdl_W_shortcut_arrival':True,
+        'sdl_shortcut_return_visible_and_occlusion_assist':True,
         'sdl_phase_shift':True,'fixed_hud_during_shift':True,'one_shot_phase_sounds':True,
+        'sdl_dawn_puzzle_both_approaches':True,
         'sdl_walk_new_passage':True,'sdl_phase_map':True,'sdl_phase_trap_return':True,
         'sdl_closed_wall_blocks':True,'new_wall_hides_old_visibility_cache':True,
         'sdl_attack_direction_hit_and_restart':True,

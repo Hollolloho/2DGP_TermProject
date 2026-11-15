@@ -6,11 +6,11 @@ import json
 import math
 from pathlib import Path
 import pico2d.pico2d as p
-from maze_model import BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS, COLS, ROWS, PHASES, TRAP_LENGTH
-from maze_model import PHASE_SECONDS, SHIFT_SECONDS, SHIFT_SWAP_AT
-from maze_model import ATTACK_FORWARD, DEFAULT_ATTACK_HIT_MS, HALF_TILE_W, HALF_TILE_H, project
-from trap_view import Corridor
-from mouse_maze import MAZE, cell_rect
+from .maze_model import BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS, COLS, ROWS, PHASES, TRAP_LENGTH
+from .maze_model import PHASE_SECONDS, SHIFT_SECONDS, SHIFT_SWAP_AT
+from .maze_model import ATTACK_FORWARD, DEFAULT_ATTACK_HIT_MS, HALF_TILE_W, HALF_TILE_H, project
+from .trap_view import Corridor
+from .mouse_maze import MAZE, cell_center, cell_rect
 
 LW, LH, SCALE = 640, 400, 2
 MAP_RECT = (8, 32, 496, 368)
@@ -18,6 +18,7 @@ WALL_NEIGHBORS = ((0, -1, 1), (1, 0, 2), (0, 1, 4), (-1, 0, 8))
 MEMORY_LIGHT = .32
 LIGHT_FADE_SECONDS = .20
 TORCH_MOUNT_HEIGHT = 24
+OCCLUSION_SILHOUETTE_ALPHA = 176
 PLAYER_ATLAS_DIR = Path('sprite/quarter/player_explorer_attack_v2')
 
 
@@ -52,8 +53,10 @@ class View:
         self.dagger_frame_starts_ms = tuple(self.dagger_fx['frame_starts_ms'])
         self.dagger_end_ms = self.dagger_fx['start_ms']+self.dagger_fx['duration_ms']
         self.images['dagger-slash'] = self.load(dagger_dir/self.dagger_fx['image'], pixel=True)
+        self.images['mouse-maze-panel'] = self.load('sprite/ui/mouse-maze-panel.png')
         self.logical = self.target(LW, LH)
         self.display = self.target(LW*SCALE, LH*SCALE)
+        self.display_ready = False
         self.corridor = Corridor(self)
         self.origin, self.world_scale = (0, 0), 1
         self.camera, self.camera_game = None, None
@@ -62,6 +65,7 @@ class View:
         self.light_revision = -1
         self.last_mode, self.mode_changed = None, -10
         self.mode_game = None
+        self.mode_fade_strength = 1.
 
     def load(self, path, pixel=False):
         image = p.load_image(str(self.root/path))
@@ -209,18 +213,29 @@ class View:
             self.image('dagger-slash', dagger[1], dagger[2])
         if torch and not torch_in_front:
             self.effect('torch', *torch)
-        movement = {'walk': 'walk', 'sprint': 'run'}.get(game.player.state)
         destination = (left, top, frame[2]*scale, frame[3]*scale)
-        if movement and 'upper_layer_rects' in clip:
-            legs = self.moving_attack_legs(game, movement, clip['direction'])
-            self.image('moving-attack', destination, legs)
-            self.image('moving-attack', destination, clip['upper_layer_rects'][index])
-        else:
-            self.image('player', destination, frame)
+        self.player_body(game, clip, index, destination)
         if torch and torch_in_front:
             self.effect('torch', *torch)
         if dagger and dagger[0] == 'front':
             self.image('dagger-slash', dagger[1], dagger[2])
+
+    def player_body(self, game, clip, index, destination, alpha=255):
+        blend = {'alpha': alpha} if alpha != 255 else {}
+        movement = {'walk': 'walk', 'sprint': 'run'}.get(game.player.state)
+        if movement and 'upper_layer_rects' in clip:
+            legs = self.moving_attack_legs(game, movement, clip['direction'])
+            self.image('moving-attack', destination, legs, **blend)
+            self.image('moving-attack', destination, clip['upper_layer_rects'][index], **blend)
+        else:
+            self.image('player', destination, clip['frames'][index]['rect'], **blend)
+
+    def player_silhouette(self, x, y, game):
+        clip, index = self.player_pose(game)
+        _, _, width, height = clip['frames'][index]['rect']
+        px, py = self.player_catalog['pivot']
+        self.player_body(game, clip, index, (x-px, y-py, width, height),
+                         alpha=OCCLUSION_SILHOUETTE_ALPHA)
 
     def moving_attack_legs(self, game, state, facing):
         # Keep the view of the legs aligned to the locked upper body. Backward
@@ -244,6 +259,8 @@ class View:
 
     def guardian(self, x, y, game, tint):
         self.atlas(x, y, 'guardian', 'idle_'+self.facing[game.guard_direction], tint)
+        if game.guard_attack_at is not None:
+            self.text('!', x-3, y-68*self.world_scale, (255,204,112), size='font')
         if game.time < game.guard_alert_until:
             scale = self.world_scale
             self.rectangle(x-12*scale, y-56*scale, 24*scale, 2*scale, (36,29,26))
@@ -392,6 +409,9 @@ class View:
         left, top, width, height = MAP_RECT
         p.SDL_RenderSetClipRect(p.renderer, p.SDL_Rect(*MAP_RECT))
         scene = []
+        player_x, player_y = self.world(game.player.x, game.player.y)
+        show_silhouette = False
+        in_exploration_view = game.state == 'explore' and not game.reveal_all
         drawn_cells = {(x, y) for y in range(ROWS) for x in range(COLS)} if game.reveal_all else game.observed
 
         def place(draw, x, y, *args):
@@ -416,6 +436,9 @@ class View:
             if game.grid[y][x]:
                 mask = self.wall_mask(game, x, y)
                 place(self.shifting_wall, x+.5, y+.5, f'wall_{mask}', tint, brightness, (x, y), game)
+                # Approximate overlap with the solid part of a foreground tile.
+                if in_exploration_view and abs(sx-player_x) < 34 and 0 < sy-player_y <= 48:
+                    show_silhouette = True
 
         for (x, y), frame in ((game.exit, 'rope_exit'),
                               (game.fountain, 'fountain_empty' if game.fountain_used else 'fountain_full')):
@@ -432,15 +455,20 @@ class View:
 
         markers = []
         if gate and (gate_cell in game.visible or game.reveal_all):
-            x, y = gate[1]
-            sx, sy = self.world(x+.5, y+.5)
             color = (127,197,183) if game.puzzle_open else (218,175,107)
-            markers.append(('P', sx-12*self.world_scale, sy, color))
+            for x, y in gate[1:]:
+                if (x, y) in game.visible or game.reveal_all:
+                    sx, sy = self.world(x+.5, y+.5)
+                    markers.append(('P', sx-12*self.world_scale, sy, color))
         for cell, arrival in ((game.trap_cell, False), (game.trap_exit, True)):
             if cell not in game.visible and not game.reveal_all:
                 continue
             x, y, facing = self.shortcut_mount(game, cell)
             place(self.shortcut, x, y, facing, arrival, self.tile_tint(game, *cell))
+            if arrival and in_exploration_view:
+                arch_x, arch_y = self.world(x, y)
+                if abs(arch_x-player_x) < 40 and 0 < arch_y-player_y <= 48:
+                    show_silhouette = True
             sx, sy = self.world(cell[0]+.5, cell[1]+.5)
             color = (127,197,183) if arrival else (218,175,107)
             markers.append(('B' if arrival else 'A', sx+18*self.world_scale, sy, color))
@@ -452,11 +480,14 @@ class View:
 
         if game.guard_hp and (game.guard in game.visible or game.reveal_all):
             x, y = game.guard
-            place(self.guardian, x+.5, y+.5, game, self.tile_tint(game, x, y))
+            place(self.guardian, game.guard_x, game.guard_y, game, self.tile_tint(game, x, y))
         place(self.player, game.player.x, game.player.y, game)
         # Sort all upright art together by its ground point, independent of sprite height.
         for _, draw, params in sorted(scene, key=lambda item: item[0]):
             draw(*params)
+        # Keep the depth-sorted scene intact and reveal only the player's pose.
+        if show_silhouette:
+            self.player_silhouette(player_x, player_y, game)
         for marker in markers:
             self.badge(*marker)
         p.SDL_RenderSetClipRect(p.renderer, None)
@@ -511,12 +542,14 @@ class View:
         if game.state=='trap':
             lines=['W / S  전진·후진','A / D  칼날 회피','Esc  입장 전 복귀',f'진행 {int(game.trap_progress*100)}%']
         elif game.state == 'puzzle':
-            lines = ['좌클릭 드래그', '버튼 놓기  중단', '마지막 점에서 재개',
+            lines = ['좌클릭으로 선 잇기', '버튼 놓기  중단', '커서에서 재개',
                      'Esc  퍼즐 닫기', '세계 시간은 계속 진행']
         else:
-            lines=['WASD  화면 상하좌우','두 키 조합  대각선','Shift  달리기','좌클릭  검 공격','F  상호작용','M  방문 지도','V  시야 / 전체 보기','R  새 회차','F10  화면 저장','Esc  창 닫기']
+            lines=['WASD  통로 방향','두 키 조합  격자 대각선','Shift  달리기','좌클릭  검 공격','F  상호작용','M  방문 지도','V  시야 / 전체 보기','R  새 회차','F10  화면 저장','Esc  창 닫기']
         for i,line in enumerate(lines):
             self.text(line,523,215+i*16,(175,183,175))
+        if game.state == 'puzzle' and game.guard_attack_at is not None:
+            self.text('수호자 공격 예고',523,327,(255,204,112))
         if game.puzzle_gate:
             if game.puzzle_open:
                 self.text('퍼즐 통로 개방됨',523,371,(127,197,183))
@@ -532,42 +565,116 @@ class View:
         self.text(f'{fps:.0f} FPS',574,387,(106,120,119))
 
     def puzzle_overlay(self, game):
-        self.rectangle(16, 37, 488, 326, (12, 18, 22, 248))
-        self.text('마우스 미로', 66, 63, size='title')
-        self.text('출발점을 누른 채 도착점까지 · Esc 닫기', 66, 89, size='font')
-        self.text('버튼을 놓으면 마지막 점에서 이어서 풀 수 있습니다.', 66, 111)
+        parchment = (234, 219, 183)
+        muted = (186, 172, 146)
+        ember = (239, 183, 104)
+        moss = (188, 205, 154)
+        mortar = (32, 26, 22)
+        wall_tint = (218, 202, 178)
+        floor_tint = (92, 98, 99)
+        trail_tint = (119, 112, 97)
+        active_tint = (133, 121, 95)
+
+        def stone(rect, x, y, solid, tint):
+            material = 'raw_wall' if solid else 'raw_floor'
+            self.image(material, rect, (x % 9*130, y % 9*130, 130, 130), tint)
+
+        self.image('mouse-maze-panel', (16, 37, 488, 326))
+        self.text('마우스 미로', 66, 68, parchment, size='title')
+        self.text('좌클릭을 누른 채 도착까지 선 잇기', 66, 94, parchment, size='font')
+        self.text('버튼을 놓으면 커서에서 다시 시작', 66, 113, muted)
+        self.text('Esc 닫기', 394, 68, muted, size='font')
+
+        self.rectangle(64, 132, 310, 174, mortar)
+        tile_tints = {'#': wall_tint, 'G': (148, 119, 83)}
+        puzzle = game.puzzle
+        linked_cells = set(puzzle.path)
+        if len(puzzle.path) > 1 and puzzle.preview_cell == puzzle.path[-2]:
+            # 되짚는 끝 칸은 커서가 물러나는 만큼 기본색으로 돌아간다.
+            linked_cells.remove(puzzle.cell)
+        active_cells = (puzzle.cell, puzzle.preview_cell)
+        cursor_x, cursor_y = puzzle.cursor
         for y, row in enumerate(MAZE):
             for x, tile in enumerate(row):
+                rect = cell_rect(x, y)
+                cell = (x, y)
+                tint = tile_tints.get(tile, trail_tint if cell in linked_cells else floor_tint)
+                if tile != '#' and cell in active_cells:
+                    cx, cy = cell_center(x, y)
+                    distance = abs(cursor_x-cx)+abs(cursor_y-cy)
+                    weight = max(0., 1-distance/rect[2])
+                    tint = tuple(round(base+(active-base)*weight)
+                                 for base, active in zip(tint, active_tint))
+                stone(rect, x, y, tile == '#', tint)
+
+        for y, row in enumerate(MAZE):
+            for x, tile in enumerate(row):
+                if tile == '#':
+                    continue
                 left, top, width, height = cell_rect(x, y)
-                color = {'#': (63, 73, 76), '.': (27, 37, 43),
-                         'S': (46, 100, 89), 'G': (117, 89, 53)}[tile]
-                self.rectangle(left, top, width, height, color)
+                cx, cy = left+width//2, top+height//2
+                for dx, dy in ((1, 0), (0, 1)):
+                    nx, ny = x+dx, y+dy
+                    if ny < len(MAZE) and nx < len(row) and MAZE[ny][nx] != '#':
+                        end_x, end_y = cx+dx*width, cy+dy*height
+                        self.line(cx, cy, end_x, end_y, (22, 19, 16))
+                        self.line(cx+dy, cy+dx, end_x+dy, end_y+dx, (120, 105, 81))
+                self.rectangle(cx-2, cy-2, 5, 5, (30, 26, 22))
+                self.rectangle(cx-1, cy-1, 3, 3, (154, 135, 101))
                 if tile in 'SG':
-                    self.text('출발' if tile == 'S' else '도착', left+5, top+20)
-        if game.puzzle.point is not None:
-            x, y = game.puzzle.point
-            self.rectangle(x-3, y-3, 7, 7, (250, 228, 155))
+                    label, accent = ('출발', parchment) if tile == 'S' else ('도착', ember)
+                    self.rectangle(cx-4, cy-4, 9, 9, mortar)
+                    self.rectangle(cx-3, cy-3, 7, 7, accent)
+                    self.text(label, left+7, top+27, accent)
+
+        self.puzzle_route(game)
         if game.puzzle.hit_wall:
-            self.text('벽에 닿았습니다 · 출발점에서 다시 시작', 66, 326, (235, 162, 123), size='font')
+            self.text('연결이 막혔습니다 · 통로로 돌아와 이어 그리기', 66, 331, ember, size='font')
         else:
-            self.text('완료하면 다음 시간대에 문이 열립니다.', 66, 326, size='font')
+            self.text('완료하면 다음 시간대에 문이 열립니다.', 66, 331, parchment, size='font')
 
         wall, near, far = game.puzzle_gate
         wx, wy = wall
-        for index, (title, grid) in enumerate((
-            ('현재', game.grid),
-            (f'{PHASES[game.next_phase]} 개방 후', game.maze_layouts.grids[game.next_phase]),
+        for index, (title, grid, accent, opening) in enumerate((
+            ('현재 · 닫힘', game.grid, ember, False),
+            (f'{PHASES[game.next_phase]} · 개방', game.maze_layouts.grids[game.next_phase], moss, True),
         )):
             top = 154 + index*88
-            self.text(title, 394, top-11)
+            self.text(title, 394, top-10, accent)
+            self.rectangle(392, top-2, 63, 63, mortar)
             for y in range(wy-1, wy+2):
                 for x in range(wx-1, wx+2):
-                    color = (66, 75, 78) if grid[y][x] else (28, 39, 45)
+                    gate = (x, y) == wall
+                    solid = bool(grid[y][x]) and not (opening and gate)
+                    rect = (394+(x-wx+1)*20, top+(y-wy+1)*20, 19, 19)
+                    tint = wall_tint if solid else floor_tint
                     if (x, y) in (near, far):
-                        color = (53, 108, 99)
-                    if (x, y) == wall:
-                        color = (61, 150, 132) if index else (162, 118, 65)
-                    self.rectangle(394+(x-wx+1)*20, top+(y-wy+1)*20, 19, 19, color)
+                        tint = (139, 134, 117)
+                    if gate:
+                        self.rectangle(*rect, accent)
+                        left, tile_top, width, height = rect
+                        rect = (left+1, tile_top+1, width-2, height-2)
+                        tint = (241, 203, 152) if solid else (133, 169, 134)
+                    stone(rect, x, y, solid, tint)
+
+    def puzzle_route(self, game):
+        puzzle = game.puzzle
+        gold = (241, 198, 123)
+        edge = (107, 70, 39)
+        nodes = [cell_center(*cell) for cell in puzzle.path]
+        # Returning along the previous edge retracts its visible end before the node pops.
+        if len(nodes) > 1 and puzzle.preview_cell == puzzle.path[-2]:
+            nodes.pop()
+        for (x, y), (nx, ny) in zip(nodes, [*nodes[1:], puzzle.cursor]):
+            if (x, y) == (nx, ny):
+                continue
+            self.rectangle(min(x, nx)-1, min(y, ny)-1, abs(nx-x)+3, abs(ny-y)+3, edge)
+            self.line(x, y, nx, ny, gold)
+        for x, y in nodes:
+            self.rectangle(x-2, y-2, 5, 5, gold)
+        x, y = puzzle.cursor
+        self.rectangle(x-3, y-3, 7, 7, edge)
+        self.rectangle(x-2, y-2, 5, 5, (255, 235, 182))
 
     def map_overlay(self, game):
         self.rectangle(0,0,640,400,(5,10,14,244))
@@ -585,10 +692,13 @@ class View:
         x,y=game.player.x,game.player.y
         self.rectangle(ox+x*step-2,oy+y*step-2,5,5,(231,214,156))
         self.text('노랑: 플레이어    A: 함정방 입구    B: 도착점',145,370)
+        if game.guard_attack_at is not None:
+            self.text('수호자 공격 예고',459,37,(255,204,112),size='font')
 
     def draw(self, game, fps=0):
         p.canvas_width,p.canvas_height=LW,LH
-        if game.state=='trap':
+        native_trap = game.state == 'trap'
+        if native_trap:
             p.SDL_SetRenderTarget(p.renderer,self.display)
             self.trap(game)
             p.SDL_SetRenderTarget(p.renderer,self.logical)
@@ -596,7 +706,7 @@ class View:
         else:
             p.SDL_SetRenderTarget(p.renderer,self.logical)
             self.quarter(game)
-        self.hud_trap(game) if game.state=='trap' else self.hud(game,fps)
+        self.hud_trap(game) if native_trap else self.hud(game,fps)
         if game.map_open and game.state=='explore':
             self.map_overlay(game)
         if game.state == 'puzzle':
@@ -612,29 +722,43 @@ class View:
         # 탐색↔변형에는 전체 암전을 넣지 않아 벽 연출과 고정 HUD가 보이게 한다.
         display_mode = 'explore' if game.state in ('shifting', 'puzzle') else game.state
         if self.mode_game is not game or self.last_mode != display_mode:
+            returning = self.mode_game is game and self.last_mode == 'trap' and display_mode == 'explore'
+            # Show the landing point even on the first frame of the return fade.
+            self.mode_fade_strength = .5 if returning else 1.
             self.mode_game = game
             self.last_mode, self.mode_changed = display_mode, game.ui_time
         fade=max(0,1-(game.ui_time-self.mode_changed)/.28)
         if fade:
-            self.rectangle(0,0,LW,LH,(0,0,0,round(255*fade)))
-        p.SDL_SetRenderTarget(p.renderer,self.display)
-        p.SDL_RenderCopy(p.renderer,self.logical,None,None)
-        p.SDL_SetRenderTarget(p.renderer,None)
-        p.SDL_RenderCopy(p.renderer,self.display,None,None)
+            self.rectangle(0,0,LW,LH,(0,0,0,round(255*fade*self.mode_fade_strength)))
+        if native_trap:
+            p.SDL_SetRenderTarget(p.renderer, self.display)
+            p.SDL_RenderCopy(p.renderer, self.logical, None, None)
+        self.display_ready = native_trap
+        p.SDL_SetRenderTarget(p.renderer, None)
+        p.SDL_RenderCopy(p.renderer, self.display if native_trap else self.logical, None, None)
+
+    def select_readback_target(self):
+        """Select the current frame as a 1280×800 texture for pixel readback."""
+        p.SDL_SetRenderTarget(p.renderer, self.display)
+        if not self.display_ready:
+            p.SDL_RenderCopy(p.renderer, self.logical, None, None)
+            self.display_ready = True
 
     def capture(self, path):
         path=Path(path)
         path.parent.mkdir(parents=True,exist_ok=True)
-        p.SDL_SetRenderTarget(p.renderer,self.display)
+        self.select_readback_target()
         w,h=LW*SCALE,LH*SCALE
         pixels=(ctypes.c_ubyte*(w*h*4))()
-        assert p.SDL_RenderReadPixels(p.renderer,None,p.SDL_PIXELFORMAT_RGBA32,pixels,w*4)==0
-        surface=p.SDL_CreateRGBSurfaceWithFormatFrom(pixels,w,h,32,w*4,p.SDL_PIXELFORMAT_RGBA32)
-        assert surface
         try:
-            assert p.IMG_SavePNG(surface,str(path).encode('utf-8'))==0
+            assert p.SDL_RenderReadPixels(p.renderer,None,p.SDL_PIXELFORMAT_RGBA32,pixels,w*4)==0
+            surface=p.SDL_CreateRGBSurfaceWithFormatFrom(pixels,w,h,32,w*4,p.SDL_PIXELFORMAT_RGBA32)
+            assert surface
+            try:
+                assert p.IMG_SavePNG(surface,str(path).encode('utf-8'))==0
+            finally:
+                p.SDL_FreeSurface(surface)
         finally:
-            p.SDL_FreeSurface(surface)
             p.SDL_SetRenderTarget(p.renderer,None)
 
     def close(self):

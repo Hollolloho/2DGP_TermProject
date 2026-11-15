@@ -1,7 +1,7 @@
 """실제 지면 거리 기반 보행 검사. 모델 검사는 SDL 없이 실행한다."""
 import math
-from maze_model import Game, COLS, ROWS, DIRECTIONS, PHASE_SECONDS
-from maze_model import WALK_CYCLE_PX, RUN_CYCLE_PX, WALK_SPEED, RUN_SPEED, project
+from SourceCode.maze_model import Game, COLS, ROWS, DIRECTIONS, PHASE_SECONDS
+from SourceCode.maze_model import WALK_CYCLE_PX, RUN_CYCLE_PX, WALK_SPEED, RUN_SPEED, project
 
 
 SCHEDULES = ([1/30]*30, [1/60]*60, [1/120]*120,
@@ -125,10 +125,11 @@ def check_clip_metadata():
     """이미지를 만들지 않고 메모리 토큰으로 16프레임 선택·메타 연결을 검사한다."""
     import json
     from pathlib import Path
-    from game_view import View
-    from maze_model import DIAGONAL_FACINGS
+    from SourceCode.game_view import View
+    from SourceCode.maze_model import DIAGONAL_FACINGS
 
-    catalog = json.loads((Path(__file__).parent/'sprite/quarter/player_explorer_v1/explorer.json').read_text(encoding='utf-8'))
+    atlas = Path(__file__).resolve().parents[1]/'sprite/quarter/player_explorer_v1/explorer.json'
+    catalog = json.loads(atlas.read_text(encoding='utf-8'))
     # 최종 에셋 교체 후에도 '정면 클립·보행 메타 없음' 호환 검사를 유지한다.
     legacy = {name: {key: value for key, value in clip.items()
                      if key not in ('cycle_distance_px', 'phase_offset_frames')}

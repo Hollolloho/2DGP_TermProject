@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import math
 import random
 from transitions import Machine
-from mouse_maze import MouseMaze
+from .mouse_maze import MouseMaze
 
 COLS, ROWS = 31, 23
 # 쿼터뷰 지면의 반쪽 타일 크기. 렌더링과 이동 속도 계산이 같은 투영을 사용한다.
@@ -22,6 +22,8 @@ BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS = 5.5, 7
 DIRECTIONS = ((0, 1), (-1, 0), (1, 0), (0, -1))  # down, left, right, up
 DIAGONAL_FACINGS = ('sw', 'nw', 'se', 'ne')
 ATTACK_COOLDOWN, DEFAULT_ATTACK_HIT_MS = .75, 233
+GUARD_SPEED, GUARD_NOTICE_RADIUS, GUARD_CHASE_MEMORY = 2., 6., 6.
+GUARD_REACH, GUARD_WINDUP, GUARD_COOLDOWN, GUARD_DAMAGE = 1.25, .45, 1.1, 15
 PHASES = ('낮', '밤', '새벽')
 # 플레이테스트용 기본값. 최종 시간·연출 강도는 조정할 수 있다.
 PHASE_SECONDS, PHASE_WARNING_SECONDS = 60.0, 5.0
@@ -254,7 +256,8 @@ class Game:
         self.trap_discovered, self.trap_completed = False, False
         self.landing_until = 0.0
         protected=(self.spawn,self.torch_cell,self.trap_cell,self.trap_exit,self.fountain,self.exit)
-        self.guard = guard_position(self.grid,path,protected,seed)
+        self.guard_home = guard_position(self.grid,path,protected,seed)
+        self.guard = self.guard_home
         landmarks = {
             'spawn': self.spawn, 'exit': self.exit, 'torch': self.torch_cell,
             'trap_entry': self.trap_cell, 'trap_exit': self.trap_exit,
@@ -278,6 +281,8 @@ class Game:
             return next((n for n in range(1,6) if self.solid(gx+dx*n,gy+dy*n)),6)
         self.guard_direction=max(range(4),key=open_length)
         self.guard_alert_until=0.0
+        self.guard_seen_until = self.guard_ready_at = 0.
+        self.guard_attack_at = None
         self.guard_hp, self.fountain_used = 3, False
         self.phase_time = self.time = 0.0
         # UI·변형 연출 시계만 계속 움직이고, 변형 중 게임 세계 시계는 멈춘다.
@@ -303,7 +308,7 @@ class Game:
         self.machine = Machine(model=self, states=['explore', 'puzzle', 'trap', 'shifting', 'clear', 'failed'],
             initial='explore', auto_transitions=False,
             transitions=[['enter_room', 'explore', 'trap'], ['leave_room', 'trap', 'explore'],
-                         ['escape', 'explore', 'clear'], ['fail', 'trap', 'failed'],
+                         ['escape', 'explore', 'clear'], ['fail', ['explore', 'trap'], 'failed'],
                          ['enter_puzzle', 'explore', 'puzzle'], ['leave_puzzle', 'puzzle', 'explore'],
                          ['begin_transform', 'explore', 'shifting'],
                          ['finish_transform', 'shifting', 'explore']])
@@ -345,14 +350,24 @@ class Game:
     def next_phase(self):
         return (self.phase+1) % len(PHASES)
 
+    @property
+    def guard(self):
+        return math.floor(self.guard_x), math.floor(self.guard_y)
+
+    @guard.setter
+    def guard(self, cell):
+        self.guard_x, self.guard_y = cell[0]+.5, cell[1]+.5
+        self.guard_step = None
+
     def puzzle_available(self):
-        return (self.puzzle_gate is not None and not self.puzzle_open
-                and self.puzzle_reserved_phase is None
-                and self.puzzle_gate[0] in self.visible and self.close_to(self.puzzle_gate[1], .75))
+        if self.puzzle_gate is None or self.puzzle_open or self.puzzle_reserved_phase is not None:
+            return False
+        wall, near, far = self.puzzle_gate
+        return wall in self.visible and (self.close_to(near, .75) or self.close_to(far, .75))
 
     def close_puzzle(self):
         if self.state == 'puzzle':
-            self.puzzle.dragging = False
+            self.puzzle.release()
             self.leave_puzzle()
 
     def drag_puzzle(self, point):
@@ -441,6 +456,8 @@ class Game:
             self.return_from_trap()
         self.close_puzzle()
         self.puzzle.reset()
+        self.guard_attack_at = None
+        self.guard_seen_until = 0.
         next_grid = self.layout_for_phase(self.next_phase)
         self.shift_cells = {(x, y) for y in range(ROWS) for x in range(COLS)
                             if self.grid[y][x] != next_grid[y][x]}
@@ -458,6 +475,14 @@ class Game:
             self.puzzle_reserved_phase = None
         self.player.x, self.player.y = self.safe_position(next_grid)
         self.grid = next_grid
+        if self.guard_hp and (
+                not self.can_stand(self.guard_x, self.guard_y)
+                or (self.guard_step is not None and self.solid(*self.guard_step))):
+            # The home cell is protected across phases. Use a nearby floor cell
+            # if the player is standing within immediate melee reach of home.
+            self.guard = next(cell for cell in distances(self.grid, self.guard_home)
+                              if math.hypot(cell[0]+.5-self.player.x,
+                                            cell[1]+.5-self.player.y) > GUARD_REACH)
         self.phase = self.layout_phase = next_phase
         self.layout_revision += 1
         self.observed = self.observed_by_phase[next_phase]
@@ -483,15 +508,23 @@ class Game:
         return math.hypot(self.player.x-cell[0]-.5, self.player.y-cell[1]-.5) <= radius and self.line_of_sight(*cell)
 
     def line_of_sight(self, x, y):
+        return self.clear_line_to(x+.5, y+.5)
+
+    def clear_line_to(self, tx, ty):
         px, py = self.player.x, self.player.y
         cx, cy = math.floor(px), math.floor(py)
-        dx, dy = x+.5-px, y+.5-py
+        x, y = math.floor(tx), math.floor(ty)
+        dx, dy = tx-px, ty-py
         step_x, step_y = (1 if dx > 0 else -1), (1 if dy > 0 else -1)
         stride_x = 1/abs(dx) if dx else math.inf
         stride_y = 1/abs(dy) if dy else math.inf
         next_x = (cx+(step_x > 0)-px)/dx if dx else math.inf
         next_y = (cy+(step_y > 0)-py)/dy if dy else math.inf
         while (cx, cy) != (x, y):
+            if cx == x:
+                next_x = math.inf
+            if cy == y:
+                next_y = math.inf
             # Visit every crossed cell, even when the ray clips only a corner.
             if math.isclose(next_x, next_y, rel_tol=0., abs_tol=1e-12):
                 # A corner shared by two solid cells leaves no opening.
@@ -540,6 +573,8 @@ class Game:
             self.map_open = False
             self.attack_facing = self.attack_clip = None
             self.attack_hits_ms = ()
+            self.guard_attack_at = None
+            self.guard_seen_until = 0.
             self.enter_room()
             self.message(f'A 입구 → B 출구 · 일반 통로 {self.shortcut_distance}칸을 우회', 5)
         elif self.close_to(self.fountain):
@@ -552,6 +587,7 @@ class Game:
         elif self.close_to(self.exit):
             self.attack_facing = self.attack_clip = None
             self.attack_hits_ms = ()
+            self.guard_attack_at = None
             self.escape()
         elif self.puzzle_available():
             self.attack_facing = self.attack_clip = None
@@ -591,15 +627,79 @@ class Game:
         self.player.swing()
 
     def hit_guard(self):
-        if self.guard_hp <= 0 or not self.close_to(self.guard, 1.8):
+        gx, gy = self.guard_x-self.player.x, self.guard_y-self.player.y
+        if (not self.guard_hp or math.hypot(gx, gy) > 1.8
+                or not self.clear_line_to(self.guard_x, self.guard_y)):
             return
-        gx, gy = self.guard
-        dx, dy = project(gx+.5-self.player.x, gy+.5-self.player.y)
+        dx, dy = project(gx, gy)
         fx, fy = ATTACK_FORWARD[self.attack_facing]
         if dx*fx + dy*fy > 0:
             self.guard_hp -= 1
             self.guard_alert_until=self.time+2.5
-            self.message('수호자 타격' if self.guard_hp else '수호자 처치 · 추적 AI는 다음 단계')
+            if not self.guard_hp:
+                self.guard_attack_at = None
+            self.message('수호자 타격' if self.guard_hp else '수호자 처치')
+
+    def update_guard(self, dt):
+        if not self.guard_hp or self.state not in ('explore', 'puzzle'):
+            return
+        dx, dy = self.player.x-self.guard_x, self.player.y-self.guard_y
+        distance = math.hypot(dx, dy)
+        sees_player = (distance <= GUARD_NOTICE_RADIUS
+                       and self.clear_line_to(self.guard_x, self.guard_y))
+        if sees_player:
+            self.guard_seen_until = self.time+GUARD_CHASE_MEMORY
+        in_reach = sees_player and distance <= GUARD_REACH
+        if self.guard_attack_at is not None:
+            if self.time >= self.guard_attack_at:
+                self.guard_attack_at = None
+                self.guard_ready_at = self.time+GUARD_COOLDOWN
+                if in_reach:
+                    self.take_guard_hit()
+            return
+        if in_reach:
+            if self.time >= self.guard_ready_at:
+                facing = max(DIRECTIONS, key=lambda step: dx*step[0]+dy*step[1])
+                self.guard_direction = DIRECTIONS.index(facing)
+                self.guard_attack_at = self.time+GUARD_WINDUP
+            return
+        if self.guard_step is None:
+            if self.time >= self.guard_seen_until:
+                return
+            player_cell = math.floor(self.player.x), math.floor(self.player.y)
+            remaining = distances(self.grid, player_cell)
+            x, y = self.guard
+            next_distance = remaining[x, y]-1
+            for dx, dy in DIRECTIONS:
+                cell = x+dx, y+dy
+                if remaining.get(cell) == next_distance:
+                    self.guard_step = cell
+                    break
+            else:
+                return
+        # Commit to a cardinal step so retargeting never cuts through a corner.
+        tx, ty = self.guard_step[0]+.5, self.guard_step[1]+.5
+        dx, dy = tx-self.guard_x, ty-self.guard_y
+        step_left = abs(dx)+abs(dy)
+        facing = max(DIRECTIONS, key=lambda step: dx*step[0]+dy*step[1])
+        self.guard_direction = DIRECTIONS.index(facing)
+        if step_left <= GUARD_SPEED*dt+MOVE_EPSILON:
+            self.guard_x, self.guard_y = tx, ty
+            self.guard_step = None
+        else:
+            fraction = GUARD_SPEED*dt/step_left
+            self.guard_x += dx*fraction
+            self.guard_y += dy*fraction
+
+    def take_guard_hit(self):
+        was_puzzling = self.state == 'puzzle'
+        self.player.hp = max(0, self.player.hp-GUARD_DAMAGE)
+        self.close_puzzle()
+        self.map_open = False
+        if self.player.hp == 0:
+            self.fail()
+        else:
+            self.message('수호자 피격 · F로 이어 풀기' if was_puzzling else '수호자 피격')
 
     def update(self, dt, dx=0, dy=0, sprint=False):
         dt = min(.05, max(0, dt))
@@ -619,12 +719,15 @@ class Game:
         self.time += dt
         previous_attack_time = self.attack_time
         self.attack_time += dt
+        sprint_cost = dt*18
+        # A sprint tick must be funded before this tick's dawn recovery.
+        running = sprint and self.player.stamina >= sprint_cost
         if self.phase == 2:
             self.player.stamina = min(100, self.player.stamina+dt*8)
         if self.state == 'puzzle':
+            self.update_guard(dt)
             return
         if self.state == 'trap':
-            running = sprint and self.player.stamina>0
             target_speed = -dy*(2.7 if running else 1.8)
             self.trap_velocity += max(-10*dt,min(10*dt,target_speed-self.trap_velocity))
             self.trap_side_velocity += max(-12*dt,min(12*dt,dx*1.8-self.trap_side_velocity))
@@ -634,7 +737,7 @@ class Game:
             self.trap_progress = max(0,self.trap_progress+change/TRAP_LENGTH)
             self.trap_stride += abs(self.trap_progress-old_progress)*TRAP_LENGTH
             if running and dy:
-                self.player.stamina = max(0,self.player.stamina-dt*18)
+                self.player.stamina -= sprint_cost
             self.trap_cooldown = max(0, self.trap_cooldown-dt)
             for index, plane in enumerate(TRAP_PLANES):
                 blade_x = blade_position(self.time,index)
@@ -657,13 +760,10 @@ class Game:
             dx = dy = 0
         # 격자 거리 대신 투영된 지면 거리로 정규화한다. 대각선의 2:1 방향은 유지한다.
         magnitude = math.hypot(*project(dx, dy))
-        running = sprint and self.player.stamina > 0
         vx = vy = 0.
         if magnitude:
             speed = RUN_SPEED if running else WALK_SPEED
             vx, vy = self.move_straight(dx/magnitude*dt*speed, dy/magnitude*dt*speed)
-            if running:
-                self.player.stamina = max(0, self.player.stamina-dt*18)
         if vx or vy:
             # A screen-axis move ties two clips. Keep the current one if it fits.
             alignment = [vx*x+vy*y for x, y in DIRECTIONS]
@@ -681,6 +781,7 @@ class Game:
             # dt 분할에 따른 부동소수점 오차가 주기 경계의 프레임을 바꾸지 않게 한다.
             self.player.gait_phase = 0. if min(phase, 1.-phase) < 1e-10 else phase
             if running:
+                self.player.stamina -= sprint_cost
                 self.player.sprint_now()
             else:
                 self.player.walk_now()
@@ -690,4 +791,5 @@ class Game:
             for hit_ms in self.attack_hits_ms:
                 if previous_attack_time < hit_ms/1000 <= self.attack_time:
                     self.hit_guard()
+        self.update_guard(dt)
         self.update_visibility()

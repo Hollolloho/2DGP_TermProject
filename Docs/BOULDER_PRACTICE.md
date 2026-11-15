@@ -1,6 +1,6 @@
 # 돌 추격 무적 연습
 
-`돌추격_무적연습.pyw`를 더블클릭하거나 프로젝트 루트에서 `python boulder_practice.py`로 실행한다. 기존 `main.py`와 분리된 **실제 키보드 조작용 함정방 테스트**다. Python·pico2d·transitions와 기존 복도 렌더러·원본 재질을 사용한다. `sprite/traps/boulder_chase_v1`은 먼지만 제공하며 새 장애물·출구는 `sprite/traps/boulder_room_v2/catalog.json`으로 연결한다. 제작 중에는 실제 충돌 범위와 출구 폭에 맞춘 석재 도형을 표시한다.
+[`BoulderPractice/돌추격_무적연습.pyw`](../BoulderPractice/돌추격_무적연습.pyw)를 더블클릭하거나 프로젝트 루트에서 `python -m BoulderPractice.boulder_practice`로 실행한다. 본게임 [`SourceCode/main.py`](../SourceCode/main.py)와 분리된 **실제 키보드 조작용 함정방 테스트**다. Python·pico2d·transitions와 기존 복도 렌더러·원본 재질을 사용한다. `sprite/traps/boulder_chase_v1`은 먼지만 제공하며 새 장애물·출구는 `sprite/traps/boulder_room_v2/catalog.json`으로 연결한다. 제작 중에는 실제 충돌 범위와 출구 폭에 맞춘 석재 도형을 표시한다.
 
 | 조작 | 동작 |
 | --- | --- |
@@ -26,24 +26,26 @@
 - 거리 표시는 돌이 뒤에 있으면 후방 여유, 겹치면 통과 중, 앞서가면 앞쪽 돌까지의 여유를 보여 준다. Q로 뒤쪽 돌의 실제 접근·회전을 볼 수 있고, 통과한 돌은 정면에서 멀어진다. 코스 끝을 벗어난 돌은 화면에서 제외한다.
 - 성공하면 소요 시간·돌 접촉 횟수·잔여 스태미너를 표시한다. R로 다시 도전한다.
 
-현재 코스는 첫 조작 확인용이다. 갈림길 전체 미로, 외부 시간대 전환·원위치 복귀, 탑뷰 A/B 숏컷 이동과 최종 즉사 규칙은 이 독립 연습에 연결하지 않았다. 후방 보기는 연습용 기능이며 PRD의 자유 회전 카메라를 추가한 것이 아니다. 돌 충돌은 복도 전체를 압박하는 보수적인 앞면 판정이다. 최종 구체 충돌 판정과 밸런스는 추후 조정한다.
+현재 코스는 첫 조작 확인용이다. 갈림길 전체 미로, 외부 시간대 전환·원위치 복귀, 탑뷰 A/B 숏컷 이동과 최종 즉사 규칙은 이 독립 연습에 연결하지 않았다. 후방 보기는 연습용 기능이며 [PRD](PRD.md)의 자유 회전 카메라를 추가한 것이 아니다. 돌 충돌은 복도 전체를 압박하는 보수적인 앞면 판정이다. 최종 구체 충돌 판정과 밸런스는 추후 조정한다.
 
 ## 검증
 
+저장소 루트에서 실행한다.
+
 ```powershell
-python check_boulder_practice.py
-python boulder_practice.py --smoke --width 1920 --height 1080
+python -m TestCode.check_boulder_practice
+python -m BoulderPractice.boulder_practice --smoke --width 1920 --height 1080
 ```
 
 첫 명령은 준비 시간·피격 후 돌의 연속 전진·중복 접촉 방지·재접촉·무적·스태미너 0에서 걷기·장애물 충돌·우회·양쪽 출구·후방 보기 입력과 6개 기준 경로를 검사한다. 두 번째 명령은 SDL 키 이벤트로 W·Shift·Q·R·F를 실제 이벤트 처리기에 보내 렌더링과 조작 연결을 확인한다. `03-ball-passed-front.png`는 돌이 플레이어를 지나 정면으로 굴러가는 실제 렌더링 결과다.
 
 `output/boulder_practice/rules_checks.json`, `smoke.json`, `01-moving.png`~`04-complete.png`에 결과를 저장한다. `session.json`은 실행 중인 실제 창의 위치·스태미너·접촉 횟수·프로세스 ID와 SDL 창 상태를 1초 간격으로 기록한다. 자동 경로 검사는 사람의 난도 평가를 대신하지 않는다.
 
-에셋 연결 규격은 `ASSET_TASKS.md`를 따른다. 장애물·출구 카탈로그와 먼지 카탈로그는 분리하며, 임시 도형 표시는 완성 에셋으로 간주하지 않는다.
+에셋 연결 규격은 [`ASSET_TASKS.md`](ASSET_TASKS.md)를 따른다. 장애물·출구 카탈로그와 먼지 카탈로그는 분리하며, 임시 도형 표시는 완성 에셋으로 간주하지 않는다.
 
 ## 돌 표현 개선 v3 — 2026-11-06
 
-돌만 24프레임 평면 시트에서 **연속 회전하는 입체 표면의 2D 투영**으로 교체했다. `boulder_volume.py`가 거친 구형의 좌표·표면 법선·재질 좌표를 계산하고, pico2d의 SDL_RenderGeometry로 2D 삼각형을 그린다. 3D 엔진이나 레이캐스팅 라이브러리를 추가하지 않는다. 벽·바닥 렌더러는 기존 것을 재사용한다.
+돌만 24프레임 평면 시트에서 **연속 회전하는 입체 표면의 2D 투영**으로 교체했다. [`BoulderPractice/boulder_volume.py`](../BoulderPractice/boulder_volume.py)가 거친 구형의 좌표·표면 법선·재질 좌표를 계산하고, pico2d의 SDL_RenderGeometry로 2D 삼각형을 그린다. 3D 엔진이나 레이캐스팅 라이브러리를 추가하지 않는다. 벽·바닥 렌더러는 기존 것을 재사용한다.
 
 - 회전 각도는 이동 거리 ÷ 반지름으로 연속 계산한다. 시트를 초당 약 10장 바꾸던 계단식 움직임을 없앴다.
 - 좌우 이동과 Q 후방 보기에서도 같은 표면을 다른 시점으로 투영한다. 앞서가는 돌과 뒤에서 다가오는 돌의 회전 방향이 실제 월드 좌표로 이어진다.
@@ -54,4 +56,4 @@ python boulder_practice.py --smoke --width 1920 --height 1080
 
 게임 규칙은 v2와 동일하다. 돌은 5초 뒤 한 개가 출발하며, 무적 접촉 뒤에도 계속 전진한다. 스태미너·이동 속도·장애물 충돌·출구 조건을 이 표현 개선에서 변경하지 않았다.
 
-현재 돌의 시각 검사는 `sprite/traps/boulder_volume_v2/tools/check_visuals.py`다. 구형 평면 돌·삭제된 사물 시트를 불러오던 비교 경로는 제거했다. 이 도구는 현재 표현의 연속 회전·접지·좌우 시점·전후방 근접 교차와 그리기 시간을 검사한다. `--native`는 실제 그래픽 렌더러를 선택하며 기본값은 창이 없는 검사다. 최종 성능·난도는 에셋 통합 후 실제 플레이로 확인한다.
+현재 돌의 시각 검사는 프로젝트 루트에서 `python -m TestCode.check_visuals`로 실행한다. 구형 평면 돌·삭제된 사물 시트를 불러오던 비교 경로는 제거했다. 이 도구는 현재 표현의 연속 회전·접지·좌우 시점·전후방 근접 교차와 그리기 시간을 검사한다. `--native`는 실제 그래픽 렌더러를 선택하며 기본값은 창이 없는 검사다. 최종 성능·난도는 에셋 통합 후 실제 플레이로 확인한다.
