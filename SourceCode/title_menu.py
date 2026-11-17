@@ -1,7 +1,9 @@
 """게임 시작 전 타이틀과 조작법 화면."""
 import ctypes
+from time import perf_counter
 
 import pico2d.pico2d as p
+from .title_atmosphere import draw_dust
 
 
 BUTTON_ART = ('title-button-start.png', 'title-button-controls.png', 'title-button-exit.png')
@@ -82,6 +84,7 @@ def show_title_menu(project):
     help_open = False
     event = p.SDL_Event()
     discard_startup_input()
+    started = perf_counter()
 
     while True:
         choice = None
@@ -127,6 +130,7 @@ def show_title_menu(project):
 
         p.SDL_RenderCopy(p.renderer, background.texture, None, None)
         p.SDL_SetRenderDrawBlendMode(p.renderer, p.SDL_BLENDMODE_BLEND)
+        draw_dust(perf_counter() - started)
         if help_open:
             p.SDL_SetRenderDrawColor(p.renderer, 19, 13, 9, 210)
             p.SDL_RenderFillRect(p.renderer, p.SDL_Rect(60, 52, 524, 710))
