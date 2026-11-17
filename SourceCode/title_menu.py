@@ -3,7 +3,7 @@ import ctypes
 from time import perf_counter
 
 import pico2d.pico2d as p
-from .title_atmosphere import draw_dust
+from .title_atmosphere import TitleTorch, draw_dust
 
 
 BUTTON_ART = ('title-button-start.png', 'title-button-controls.png', 'title-button-exit.png')
@@ -36,6 +36,7 @@ def discard_startup_input():
 def show_title_menu(project):
     ui = project / 'sprite/ui'
     background = p.load_image(str(ui / 'title-background.png'))
+    torch = TitleTorch(project)
     heading = p.load_image(str(ui / 'title-heading.png'))
     plates = [p.load_image(str(ui / name)) for name in BUTTON_ART]
     for image in (heading, *plates):
@@ -129,8 +130,10 @@ def show_title_menu(project):
             help_open = False
 
         p.SDL_RenderCopy(p.renderer, background.texture, None, None)
+        elapsed = perf_counter() - started
+        torch.draw(elapsed)
         p.SDL_SetRenderDrawBlendMode(p.renderer, p.SDL_BLENDMODE_BLEND)
-        draw_dust(perf_counter() - started)
+        draw_dust(elapsed)
         if help_open:
             p.SDL_SetRenderDrawColor(p.renderer, 19, 13, 9, 210)
             p.SDL_RenderFillRect(p.renderer, p.SDL_Rect(60, 52, 524, 710))
