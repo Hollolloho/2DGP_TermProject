@@ -4,7 +4,7 @@ import ctypes
 import pico2d.pico2d as p
 
 
-MENU = ('게임 시작', '조작법', '게임 종료')
+BUTTON_ART = ('title-button-start.png', 'title-button-controls.png', 'title-button-exit.png')
 CREAM = (249, 232, 204)
 GOLD = (228, 180, 114)
 MUTED = (211, 190, 162)
@@ -32,10 +32,15 @@ def discard_startup_input():
 
 
 def show_title_menu(project):
-    background = p.load_image(str(project / 'sprite/ui/title-background.png'))
+    ui = project / 'sprite/ui'
+    background = p.load_image(str(ui / 'title-background.png'))
+    heading = p.load_image(str(ui / 'title-heading.png'))
+    plates = [p.load_image(str(ui / name)) for name in BUTTON_ART]
+    for image in (heading, *plates):
+        p.SDL_SetTextureBlendMode(image.texture, p.SDL_BLENDMODE_BLEND)
+    heading_rect = p.SDL_Rect(84, 167, heading.w, heading.h)
     fonts = {size: p.load_font(f'C:/Windows/Fonts/{face}.ttf', size)
-             for size, face in ((20, 'malgun'), (23, 'malgun'), (27, 'malgunbd'),
-                                (47, 'malgunbd'), (58, 'malgunbd'))}
+             for size, face in ((20, 'malgun'), (27, 'malgunbd'), (47, 'malgunbd'))}
     labels = {}
 
     def text(value, x, y, size, color=CREAM):
@@ -52,18 +57,26 @@ def show_title_menu(project):
         label = labels[key]
         p.SDL_RenderCopy(p.renderer, label.texture, None, p.SDL_Rect(x, y, label.w, label.h))
 
-    def button(label, rect, selected):
-        fill = (72, 46, 29, 245) if selected else (25, 18, 14, 224)
-        border = (190, 131, 71, 255) if selected else (113, 83, 54, 255)
-        p.SDL_SetRenderDrawColor(p.renderer, *fill)
+    def draw_back(rect):
+        p.SDL_SetRenderDrawColor(p.renderer, 72, 46, 29, 245)
         p.SDL_RenderFillRect(p.renderer, rect)
-        p.SDL_SetRenderDrawColor(p.renderer, *border)
+        p.SDL_SetRenderDrawColor(p.renderer, 190, 131, 71, 255)
         p.SDL_RenderDrawRect(p.renderer, rect)
-        if selected:
-            text('›', rect.x+18, rect.y+(rect.h-35)//2, 27, GOLD)
-        text(label, rect.x+48, rect.y+(rect.h-35)//2, 27, CREAM if selected else MUTED)
+        text('›', rect.x+18, rect.y+(rect.h-35)//2, 27, GOLD)
+        text('뒤로', rect.x+48, rect.y+(rect.h-35)//2, 27)
 
-    buttons = [p.SDL_Rect(86, 354+index*70, 338, 56) for index in range(len(MENU))]
+    def draw_focus(rect):
+        x, y, w, h = rect.x, rect.y, rect.w, rect.h
+        # 테두리를 버튼 이미지의 잘린 모서리에 맞춘다.
+        corners = ((7, 1), (w-8, 1), (w-2, 7), (w-2, h-8), (w-8, h-2),
+                   (7, h-2), (1, h-8), (1, 7), (7, 1))
+        points = (p.SDL_Point * len(corners))(*(p.SDL_Point(x+dx, y+dy) for dx, dy in corners))
+        p.SDL_SetRenderDrawColor(p.renderer, *GOLD, 255)
+        p.SDL_RenderDrawLines(p.renderer, points, len(points))
+        p.SDL_RenderDrawLine(p.renderer, x+19, y+23, x+25, y+28)
+        p.SDL_RenderDrawLine(p.renderer, x+25, y+28, x+19, y+33)
+
+    buttons = [p.SDL_Rect(86, 354+index*70, plate.w, plate.h) for index, plate in enumerate(plates)]
     back = p.SDL_Rect(86, 688, 196, 54)
     selected = 0
     help_open = False
@@ -86,7 +99,7 @@ def show_title_menu(project):
                 elif key in (p.SDLK_RETURN, p.SDLK_KP_ENTER):
                     choice = 'back' if help_open else selected
                 elif not help_open and key in (p.SDLK_UP, p.SDLK_DOWN):
-                    selected = (selected + (1 if key == p.SDLK_DOWN else -1)) % len(MENU)
+                    selected = (selected + (1 if key == p.SDLK_DOWN else -1)) % len(buttons)
             elif event.type == p.SDL_MOUSEMOTION and not help_open:
                 for index, rect in enumerate(buttons):
                     if contains(rect, event.motion.x, event.motion.y):
@@ -129,13 +142,13 @@ def show_title_menu(project):
             text('전진·후진', 170, 610, 20)
             text('A / D', 305, 610, 20, GOLD)
             text('좌우 이동', 389, 610, 20)
-            button('뒤로', back, True)
+            draw_back(back)
             text('Enter / Esc', 306, 702, 20, MUTED)
         else:
-            text('초보자를 위한', 86, 166, 47)
-            text('미로 탈출 안내서', 86, 228, 58)
-            for index, (label, rect) in enumerate(zip(MENU, buttons)):
-                button(label, rect, index == selected)
+            p.SDL_RenderCopy(p.renderer, heading.texture, None, heading_rect)
+            for plate, rect in zip(plates, buttons):
+                p.SDL_RenderCopy(p.renderer, plate.texture, None, rect)
+            draw_focus(buttons[selected])
             text('↑ ↓ 이동    Enter 선택    Esc 종료', 86, 575, 20, MUTED)
 
         p.SDL_RenderPresent(p.renderer)
