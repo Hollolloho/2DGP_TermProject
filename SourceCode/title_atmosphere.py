@@ -1,4 +1,4 @@
-"""타이틀 배경을 움직이는 횃불과 먼지."""
+"""타이틀 배경의 횃불, 먼지, 쥐 연출."""
 import math
 
 import pico2d.pico2d as p
@@ -55,6 +55,45 @@ class TitleTorch:
             p.SDL_SetTextureAlphaMod(self.flame.texture, mix)
             p.SDL_RenderCopy(p.renderer, self.flame.texture, following, self.flame_rect)
             p.SDL_SetTextureAlphaMod(self.flame.texture, 255)
+
+
+class TitleMouse:
+    def __init__(self, ui):
+        self.atlas = p.load_image(str(ui / 'title-mouse-run.png'))
+        self.frames = [p.SDL_Rect(col*56, row*32, 56, 32) for row in range(2) for col in range(4)]
+        p.SDL_SetTextureBlendMode(self.atlas.texture, p.SDL_BLENDMODE_BLEND)
+        p.SDL_SetTextureScaleMode(self.atlas.texture, p.SDL_ScaleModeLinear)
+
+    def draw(self, seconds):
+        if seconds < 4.7:
+            return
+        # 등장 간격은 14.2초, 17.8초, 12.9초, 18.6초를 반복한다.
+        cycle = (seconds-4.7) % 63.5
+        start = next(at for at in (44.9, 32.0, 14.2, 0.0) if cycle >= at)
+        age = cycle-start
+        progress = age/1.8
+        if progress >= 1.0:
+            return
+        opacity = round(255*min(1.0, age/.14, (1.0-progress)/.24))
+        if opacity == 0:
+            return
+
+        # 가까운 바닥을 왼쪽으로 가로지른 뒤 어두운 통로 안쪽으로 들어간다.
+        depth = progress*(1.2-.2*progress)
+        near = 1.0-depth
+        weights = (near**3, 3*near**2*depth, 3*near*depth**2, depth**3)
+        x = sum(value*weight for value, weight in zip((1140, 1038, 920, 856), weights))
+        y = sum(value*weight for value, weight in zip((678, 674, 608, 430), weights))
+        scale = 1.0-.68*depth
+        width, height = round(56*scale), round(32*scale)
+        foot = p.SDL_Point(round(width/2), round(26*height/32))
+        destination = p.SDL_Rect(round(x)-foot.x, round(y)-foot.y, width, height)
+        shade = round(255-78*depth)
+        p.SDL_SetTextureColorMod(self.atlas.texture, shade, shade, shade)
+        p.SDL_SetTextureAlphaMod(self.atlas.texture, opacity)
+        frame = self.frames[int(age*10) % len(self.frames)]
+        p.SDL_RenderCopyEx(p.renderer, self.atlas.texture, frame, destination,
+                           -9+21*depth, foot, p.SDL_FLIP_NONE)
 
 
 # 시작 위상, 이동 시간(초), 통로 안 좌우 위치, 가까운 쪽 반경, 최대 불투명도.
