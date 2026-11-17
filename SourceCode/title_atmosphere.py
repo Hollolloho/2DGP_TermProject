@@ -1,70 +1,99 @@
-"""타이틀 배경을 움직이는 횃불과 먼지."""
-import ctypes
-import json
+"""타이틀 배경의 횃불, 먼지, 쥐 연출."""
 import math
 
 import pico2d.pico2d as p
 
 
 class TitleTorch:
-    def __init__(self, project):
-        self.wall = p.load_image(str(project / 'sprite/ui/title-torch-wall-patch.png'))
+    def __init__(self, ui, background):
+        self.wall = p.load_image(str(ui / 'title-torch-wall-patch.png'))
         self.wall_rect = p.SDL_Rect(1176, 240, self.wall.w, self.wall.h)
         p.SDL_SetTextureBlendMode(self.wall.texture, p.SDL_BLENDMODE_BLEND)
 
-        directory = project / 'sprite/topdown/effects'
-        data = json.loads((directory / 'torch.json').read_text(encoding='utf-8'))
-        self.fps = data['meta']['pixelfx']['fps']
-        self.frames = [p.SDL_Rect(frame['x'], frame['y'], frame['w'], 76)
-                       for frame in (entry['frame'] for entry in data['frames'])]
-        self.flame = self.load_flame(directory / data['meta']['image'])
-        p.SDL_SetTextureBlendMode(self.flame.texture, p.SDL_BLENDMODE_BLEND)
-        p.SDL_SetTextureScaleMode(self.flame.texture, p.SDL_ScaleModeLinear)
-        p.SDL_SetTextureAlphaMod(self.flame.texture, 207)
-        # 기존 받침은 배경 그림을 쓰고, 불꽃의 밑변만 심지에 맞춘다.
-        self.flame_rect = p.SDL_Rect(1109, 167, 192, 166)
+        atlas = p.load_image(str(ui / 'title-torch-flame.png'))
+        p.SDL_SetTextureBlendMode(atlas.texture, p.SDL_BLENDMODE_BLEND)
+        p.SDL_SetTextureScaleMode(atlas.texture, p.SDL_ScaleModeLinear)
+        self.frames = [p.SDL_Rect(col*72, row*96, 72, 96) for row in range(3) for col in range(4)]
+        self.fps = 6
+        # 셀 피벗 (36, 86)을 배경 심지 (1205, 333)에 맞춘다.
+        self.flame_rect = p.SDL_Rect(1169, 247, 72, 96)
+        self.flame = self.compose_frames(background, atlas)
 
-    def load_flame(self, path):
-        source = p.IMG_Load(str(path).encode('utf-8'))
-        assert source, p.SDL_GetError()
+    def compose_frames(self, background, atlas):
+        # 같은 벽 위에 합성한 불투명 프레임끼리 섞어 불꽃의 중간 밝기를 유지한다.
+        texture = p.SDL_CreateTexture(p.renderer, p.SDL_PIXELFORMAT_RGBA8888,
+                                      p.SDL_TEXTUREACCESS_TARGET, atlas.w, atlas.h)
+        assert texture, p.SDL_GetError()
+        image = p.Image(texture)
+        p.SDL_SetTextureBlendMode(texture, p.SDL_BLENDMODE_BLEND)
+        p.SDL_SetTextureScaleMode(texture, p.SDL_ScaleModeLinear)
+        previous = p.SDL_GetRenderTarget(p.renderer)
+        if p.SDL_SetRenderTarget(p.renderer, texture) != 0:
+            raise RuntimeError(p.SDL_GetError())
         try:
-            surface = p.SDL_ConvertSurfaceFormat(source, p.SDL_PIXELFORMAT_RGBA32, 0)
+            for frame in self.frames:
+                patch = p.SDL_Rect(frame.x+self.wall_rect.x-self.flame_rect.x,
+                                   frame.y+self.wall_rect.y-self.flame_rect.y,
+                                   self.wall_rect.w, self.wall_rect.h)
+                p.SDL_RenderSetClipRect(p.renderer, frame)
+                p.SDL_RenderCopy(p.renderer, background.texture, self.flame_rect, frame)
+                p.SDL_RenderCopy(p.renderer, self.wall.texture, None, patch)
+                p.SDL_RenderCopy(p.renderer, atlas.texture, frame, frame)
         finally:
-            p.SDL_FreeSurface(source)
-        assert surface, p.SDL_GetError()
-        try:
-            if p.SDL_LockSurface(surface) != 0:
-                raise RuntimeError(p.SDL_GetError())
-            try:
-                self.feather_flame(surface.contents)
-            finally:
-                p.SDL_UnlockSurface(surface)
-            texture = p.SDL_CreateTextureFromSurface(p.renderer, surface)
-            assert texture, p.SDL_GetError()
-            return p.Image(texture)
-        finally:
-            p.SDL_FreeSurface(surface)
-
-    def feather_flame(self, surface):
-        pitch = surface.pitch
-        pixels = (ctypes.c_ubyte * (pitch*surface.h)).from_address(surface.pixels)
-        width, height = self.frames[0].w, self.frames[0].h
-        wick = [max(0.0, min(1.0, (10-abs(x-(width-1)/2))/7)) for x in range(width)]
-        for y in range(height):
-            sparks = min(1.0, .36 + max(0, y-27)*.025)
-            edge = min(1.0, (height-1-y)/15)
-            # 심지와 닿는 중심부를 남기고 잘린 바깥쪽 빛과 위쪽 불티를 약하게 한다.
-            for x, core in enumerate(wick):
-                opacity = sparks * (edge + (1.0-edge)*core)
-                if opacity < 1.0:
-                    for frame in self.frames:
-                        alpha = (frame.y+y)*pitch + (frame.x+x)*4+3
-                        pixels[alpha] = round(pixels[alpha]*opacity)
+            p.SDL_SetRenderTarget(p.renderer, previous)
+        return image
 
     def draw(self, seconds):
-        frame = self.frames[int(seconds*self.fps) % len(self.frames)]
+        position = seconds*self.fps
+        step = int(position)
+        frame = self.frames[step % len(self.frames)]
         p.SDL_RenderCopy(p.renderer, self.wall.texture, None, self.wall_rect)
         p.SDL_RenderCopy(p.renderer, self.flame.texture, frame, self.flame_rect)
+        mix = round((position-step)*255)
+        if mix:
+            following = self.frames[(step+1) % len(self.frames)]
+            p.SDL_SetTextureAlphaMod(self.flame.texture, mix)
+            p.SDL_RenderCopy(p.renderer, self.flame.texture, following, self.flame_rect)
+            p.SDL_SetTextureAlphaMod(self.flame.texture, 255)
+
+
+class TitleMouse:
+    def __init__(self, ui):
+        self.atlas = p.load_image(str(ui / 'title-mouse-run.png'))
+        self.frames = [p.SDL_Rect(col*56, row*32, 56, 32) for row in range(2) for col in range(4)]
+        p.SDL_SetTextureBlendMode(self.atlas.texture, p.SDL_BLENDMODE_BLEND)
+        p.SDL_SetTextureScaleMode(self.atlas.texture, p.SDL_ScaleModeLinear)
+
+    def draw(self, seconds):
+        if seconds < 4.7:
+            return
+        # 등장 간격은 14.2초, 17.8초, 12.9초, 18.6초를 반복한다.
+        cycle = (seconds-4.7) % 63.5
+        start = next(at for at in (44.9, 32.0, 14.2, 0.0) if cycle >= at)
+        age = cycle-start
+        progress = age/1.8
+        if progress >= 1.0:
+            return
+        opacity = round(255*min(1.0, age/.14, (1.0-progress)/.24))
+        if opacity == 0:
+            return
+
+        # 가까운 바닥을 왼쪽으로 가로지른 뒤 어두운 통로 안쪽으로 들어간다.
+        depth = progress*(1.2-.2*progress)
+        near = 1.0-depth
+        weights = (near**3, 3*near**2*depth, 3*near*depth**2, depth**3)
+        x = sum(value*weight for value, weight in zip((1140, 1038, 920, 856), weights))
+        y = sum(value*weight for value, weight in zip((678, 674, 608, 430), weights))
+        scale = 1.0-.68*depth
+        width, height = round(56*scale), round(32*scale)
+        foot = p.SDL_Point(round(width/2), round(26*height/32))
+        destination = p.SDL_Rect(round(x)-foot.x, round(y)-foot.y, width, height)
+        shade = round(255-78*depth)
+        p.SDL_SetTextureColorMod(self.atlas.texture, shade, shade, shade)
+        p.SDL_SetTextureAlphaMod(self.atlas.texture, opacity)
+        frame = self.frames[int(age*10) % len(self.frames)]
+        p.SDL_RenderCopyEx(p.renderer, self.atlas.texture, frame, destination,
+                           -9+21*depth, foot, p.SDL_FLIP_NONE)
 
 
 # 시작 위상, 이동 시간(초), 통로 안 좌우 위치, 가까운 쪽 반경, 최대 불투명도.
