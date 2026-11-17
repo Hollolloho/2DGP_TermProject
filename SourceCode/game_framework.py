@@ -39,10 +39,17 @@ def run():
             p.SDL_HideWindow(p.window)
             p.SDL_ShowWindow(p.window)
             p.SDL_RaiseWindow(p.window)
-        if not (args.smoke or args.overview or args.trap_preview):
+        show_intro = not (args.smoke or args.overview or args.trap_preview)
+        if show_intro:
+            from .title_menu import discard_startup_input, show_title_menu
+
             if not show_school_credit(p, project, width, height):
                 return
+            if not show_title_menu(project):
+                return
         mode = PlayMode(project, args)
+        if show_intro:
+            discard_startup_input()
         if args.smoke:
             from TestCode.check_game_render import run as check_render
             check_render(mode)
