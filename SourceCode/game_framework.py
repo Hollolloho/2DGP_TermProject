@@ -1,5 +1,6 @@
 """입력 처리, 상태 갱신, 화면 출력을 반복하는 게임 프레임워크."""
 import argparse
+import ctypes
 import os
 from pathlib import Path
 import time
@@ -24,7 +25,8 @@ def run():
     from .play_mode import PlayMode
 
     project = Path(__file__).resolve().parents[1]
-    p.open_canvas(LW * SCALE, LH * SCALE, sync=not args.smoke)
+    width, height = LW * SCALE, LH * SCALE
+    p.open_canvas(width, height, sync=not args.smoke)
     mode = None
     try:
         if not p.renderer:
@@ -37,6 +39,9 @@ def run():
             p.SDL_HideWindow(p.window)
             p.SDL_ShowWindow(p.window)
             p.SDL_RaiseWindow(p.window)
+        if not (args.smoke or args.overview or args.trap_preview):
+            if not show_school_credit(p, project, width, height):
+                return
         mode = PlayMode(project, args)
         if args.smoke:
             from TestCode.check_game_render import run as check_render
@@ -47,6 +52,34 @@ def run():
         if mode:
             mode.finish()
         p.close_canvas()
+
+
+def show_school_credit(p, project, width, height):
+    credit = p.load_image(str(project / 'sprite/ui/tuk_credit.png'))
+    destination = p.SDL_Rect((width-credit.w)//2, (height-credit.h)//2, credit.w, credit.h)
+    event = p.SDL_Event()
+    deadline = None
+    while True:
+        skip = False
+        # 전환 전에 현재 입력을 모두 소비해 클릭이 게임의 공격으로 이어지지 않게 한다.
+        while p.SDL_PollEvent(ctypes.byref(event)):
+            if event.type == p.SDL_QUIT or (event.type == p.SDL_WINDOWEVENT and
+                                            event.window.event == p.SDL_WINDOWEVENT_CLOSE):
+                return False
+            if event.type == p.SDL_KEYDOWN and not event.key.repeat:
+                skip |= event.key.keysym.sym in (p.SDLK_RETURN, p.SDLK_KP_ENTER, p.SDLK_SPACE)
+            elif event.type == p.SDL_MOUSEBUTTONDOWN:
+                skip |= event.button.button == p.SDL_BUTTON_LEFT
+        if skip or (deadline is not None and time.perf_counter() >= deadline):
+            return True
+
+        p.SDL_SetRenderDrawColor(p.renderer, 255, 255, 255, 255)
+        p.SDL_RenderClear(p.renderer)
+        p.SDL_RenderCopy(p.renderer, credit.texture, None, destination)
+        p.SDL_RenderPresent(p.renderer)
+        if deadline is None:
+            deadline = time.perf_counter() + 2.0
+        p.delay(.01)
 
 
 def run_loop(mode, p):
