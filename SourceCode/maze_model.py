@@ -31,6 +31,8 @@ SHIFT_SECONDS, SHIFT_SWAP_AT = .6, .3
 TRAP_LENGTH, TRAP_HALF_WIDTH, TRAP_HEIGHT = 9.0, 1.6, 3.0
 TRAP_LATERAL, BLADE_RADIUS, PLAYER_RADIUS = 1.1, .34, .20
 TRAP_PLANES = (.30, .58, .82)
+# 외부 격자 통로 칸 수. 기존 함정의 최소 우회·도착 후 탐색 조건을 재사용한다.
+BOULDER_MIN_BYPASS_CELLS, BOULDER_MIN_REMAINING_CELLS = 15, 10
 
 
 def project(x, y):
@@ -108,6 +110,11 @@ def choose_torch_mount(grid, path, reserved):
     return path[1], None
 
 
+def landmark_area(points):
+    """주요 지점과 복귀 위치의 주변 3×3 격자를 반환한다."""
+    return {(x+dx, y+dy) for x,y in points for dx in (-1,0,1) for dy in (-1,0,1)}
+
+
 class MazeLayouts:
     """한 판에서 반복해서 사용할 낮·밤·새벽 지형을 준비한다.
 
@@ -119,12 +126,7 @@ class MazeLayouts:
 
     def __init__(self, base_grid, seed, landmarks):
         self.landmarks = landmarks
-        self.protected_cells = set()
-        for x, y in landmarks.values():
-            # 테스트 보존 범위: 주요 지점과 함정 복귀 위치 주변 3×3.
-            for dy in (-1, 0, 1):
-                for dx in (-1, 0, 1):
-                    self.protected_cells.add((x + dx, y + dy))
+        self.protected_cells = landmark_area(landmarks.values())
 
         self.grids = [[row[:] for row in base_grid]]
         used_cells = set()
@@ -265,6 +267,10 @@ class Game:
         }
         self.maze_layouts = MazeLayouts(self.grid, seed, landmarks)
         self.puzzle_gate = self.choose_puzzle_gate()
+        self.boulder_entry, self.boulder_exit = self.choose_boulder_shortcut() or (None, None)
+        if self.boulder_entry is not None:
+            self.maze_layouts.landmarks.update(boulder_entry=self.boulder_entry, boulder_exit=self.boulder_exit)
+            self.maze_layouts.protected_cells.update(landmark_area((self.boulder_entry, self.boulder_exit)))
         self.puzzle = MouseMaze()
         self.puzzle_reserved_phase = None
         self.puzzle_open = False
@@ -318,6 +324,52 @@ class Game:
             transitions=[['rest', '*', 'idle'], ['walk_now', '*', 'walk'],
                          ['sprint_now', '*', 'sprint'], ['swing', '*', 'attack']])
         self.update_visibility()
+
+    def choose_boulder_shortcut(self):
+        """검증된 117 첫 회차 후보만 선택하고, 안전하지 않으면 생략한다."""
+        if (self.seed, self.run_number) != (117, 0):
+            return None
+        entry, arrival = (9, 6), (11, 13)
+        return (entry, arrival) if self.valid_boulder_shortcut(entry, arrival) else None
+
+    def valid_boulder_shortcut(self, entry, arrival):
+        """지형을 바꾸지 않고 세 시간대×퍼즐 문 개폐의 경로·복귀 안전을 검사한다."""
+        if any(not (1 <= x < COLS-1 and 1 <= y < ROWS-1) for x,y in (entry, arrival)):
+            return False
+        entry_area, arrival_area = landmark_area((entry,)), landmark_area((arrival,))
+        if entry_area & arrival_area:
+            return False
+        area = entry_area | arrival_area
+        layouts = self.maze_layouts
+        existing = [cell for name,cell in layouts.landmarks.items()
+                    if name not in ('boulder_entry', 'boulder_exit')]
+        if area & landmark_area(existing) or (self.puzzle_gate and area & set(self.puzzle_gate)):
+            return False
+        for base in layouts.grids:
+            if any(base[y][x] != layouts.grids[0][y][x] for x,y in area):
+                return False
+            for opened in (False, True):
+                grid = [row[:] for row in base]
+                if self.puzzle_gate:
+                    x,y = self.puzzle_gate[0]
+                    grid[y][x] = int(not opened)
+                if any(self.solid(x,y,grid) for x,y in existing):
+                    return False
+                if not all(self.can_stand(x+.5,y+.5,grid) for x,y in (entry, arrival)):
+                    return False
+                if not layouts.is_valid(grid):
+                    return False
+                remaining = distances(grid, self.exit)
+                if remaining[arrival] < BOULDER_MIN_REMAINING_CELLS:
+                    return False
+                if distances(grid, entry)[arrival] < BOULDER_MIN_BYPASS_CELLS:
+                    return False
+                if distances(grid, self.spawn)[entry]+remaining[arrival] >= remaining[self.spawn]:
+                    return False
+                guard = distances(grid, self.guard_home)
+                if any(guard[cell] < 4 for cell in (entry, arrival)):
+                    return False
+        return True
 
     def choose_puzzle_gate(self):
         layouts = self.maze_layouts
