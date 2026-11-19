@@ -300,6 +300,7 @@ class Game:
         self.visible = set()
         self.map_open, self.reveal_all = False, False
         self.banner, self.banner_until = '횃불에 접근해 F를 눌러 보세요', 5.0
+        self.trap_kind = 'blade'
         self.trap_progress, self.trap_x, self.trap_cooldown = 0.0, 0.0, 0.0
         self.trap_return = None
         self.trap_return_direction = self.player.direction
@@ -565,6 +566,7 @@ class Game:
             self.player.torch = True
             self.message('횃불 획득 · 원형 시야 확대')
         elif self.close_to(self.trap_cell):
+            self.trap_kind = 'blade'
             self.trap_return = self.player.x, self.player.y
             self.trap_return_direction = self.player.direction
             self.trap_progress = self.trap_x = self.trap_cooldown = 0.0
