@@ -143,15 +143,9 @@ class View:
         self.canvas=p.SDL_CreateTexture(p.renderer,p.SDL_PIXELFORMAT_RGBA8888,p.SDL_TEXTUREACCESS_TARGET,w,h)
         assert self.canvas,p.SDL_GetError()
         p.SDL_SetTextureScaleMode(self.canvas,p.SDL_ScaleModeLinear)
-        # Reuse the existing corridor planes in this dedicated process only.
-        from SourceCode import trap_view as corridor
-        corridor.WIDTH,corridor.HEIGHT,corridor.TOP=w,h,72
-        corridor.FOCAL=self.focal
-        corridor.TRAP_LENGTH=LENGTH+30
-        corridor.TRAP_HALF_WIDTH=HALF_WIDTH
-        corridor.camera=self.camera
-        self.planes=corridor.Corridor.__new__(corridor.Corridor)
-        self.planes.view=self
+        from SourceCode.trap_view import CorridorPlanes
+        self.planes=CorridorPlanes(self,width=w,height=h,top=72,focal=self.focal,
+                                   length=LENGTH+30,half_width=HALF_WIDTH,camera=self.camera)
         self.vertex=struct.Struct('<ffBBBBff')
         from .boulder_volume import Boulder
         self.rock=Boulder(self,self.images['raw_boulder'],RADIUS)

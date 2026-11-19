@@ -31,20 +31,21 @@ def project(game, x, y, world_z):
     return cx+(x-camera_x)*FOCAL/z,horizon+(eye-y)*FOCAL/z
 
 
-class Corridor:
-    def __init__(self, view):
+class CorridorPlanes:
+    def __init__(self, view, *, width=WIDTH, height=HEIGHT, top=TOP, focal=FOCAL,
+                 length=TRAP_LENGTH, half_width=TRAP_HALF_WIDTH, camera=camera):
         self.view=view
-        for name,path in [('raw_wall','sprite/wall/materials/base_a.png'),
-                          ('raw_floor','sprite/surfaces/materials/floor_flagstone.png'),
-                          ('raw_ceiling','sprite/surfaces/materials/ceiling_damp.png'),
-                          ('blade','sprite/traps/iron_blade.png')]:
-            view.images[name]=view.load(path)
+        self.width,self.height,self.top=width,height,top
+        self.focal,self.length,self.half_width=focal,length,half_width
+        self.camera=camera
 
     def draw_planes(self,game):
         """Batch small textured 2D quads; shared edges avoid raster gaps."""
         v=self.view
-        camera_x,camera_z,eye,cx,horizon=camera(game)
-        end_z=TRAP_LENGTH+1.1-camera_z
+        width,top=self.width,self.top
+        focal,half_width=self.focal,self.half_width
+        camera_x,camera_z,eye,cx,horizon=self.camera(game)
+        end_z=self.length+1.1-camera_z
 
         def vertex(x,y,u,t,z,base):
             shade=math.exp(-.065*max(0,z))
@@ -71,54 +72,64 @@ class Corridor:
         for floor in (True,False):
             height=eye if floor else TRAP_HEIGHT-eye
             sign=1 if floor else -1
-            edge=horizon+sign*height*FOCAL/end_z
-            low,high=(max(TOP,edge),HEIGHT) if floor else (TOP,min(HEIGHT,edge))
+            edge=horizon+sign*height*focal/end_z
+            low,high=(max(top,edge),self.height) if floor else (top,min(self.height,edge))
             if high<=low: continue
             nodes={low,high}
             nodes.update(float(y) for y in range(math.ceil(low),math.floor(high)+1,2))
-            nodes.update(horizon+sign*height*FOCAL/z for z in wraps if low<horizon+sign*height*FOCAL/z<high)
+            nodes.update(horizon+sign*height*focal/z for z in wraps if low<horizon+sign*height*focal/z<high)
             nodes=sorted(nodes)
             output=[]
             base=(196,187,170) if floor else (153,165,163)
             for y1,y2 in zip(nodes,nodes[1:]):
-                z1=height*FOCAL/abs(y1-horizon)
-                z2=height*FOCAL/abs(y2-horizon)
+                z1=height*focal/abs(y1-horizon)
+                z2=height*focal/abs(y2-horizon)
                 tile=math.floor((camera_z+(z1+z2)/2)/3.2)
                 uv1=(camera_z+z1)/3.2-tile
                 uv2=(camera_z+z2)/3.2-tile
-                x11=cx+(-TRAP_HALF_WIDTH-camera_x)*FOCAL/z1
-                x12=cx+(TRAP_HALF_WIDTH-camera_x)*FOCAL/z1
-                x21=cx+(-TRAP_HALF_WIDTH-camera_x)*FOCAL/z2
-                x22=cx+(TRAP_HALF_WIDTH-camera_x)*FOCAL/z2
+                x11=cx+(-half_width-camera_x)*focal/z1
+                x12=cx+(half_width-camera_x)*focal/z1
+                x21=cx+(-half_width-camera_x)*focal/z2
+                x22=cx+(half_width-camera_x)*focal/z2
                 quad(output,[vertex(x11,y1,0,uv1,z1,base),vertex(x12,y1,1,uv1,z1,base),
                              vertex(x22,y2,1,uv2,z2,base),vertex(x21,y2,0,uv2,z2,base)])
             submit('raw_floor' if floor else 'raw_ceiling',output)
 
         for side in (-1,1):
-            wall_x=side*TRAP_HALF_WIDTH
-            far=cx+(wall_x-camera_x)*FOCAL/end_z
-            low,high=(0,min(WIDTH,far)) if side<0 else (max(0,far),WIDTH)
+            wall_x=side*half_width
+            far=cx+(wall_x-camera_x)*focal/end_z
+            low,high=(0,min(width,far)) if side<0 else (max(0,far),width)
             if high<=low: continue
             nodes={low,high}
             nodes.update(float(x) for x in range(math.ceil(low),math.floor(high)+1,2))
-            nodes.update(cx+(wall_x-camera_x)*FOCAL/z for z in wraps
-                         if low<cx+(wall_x-camera_x)*FOCAL/z<high)
+            nodes.update(cx+(wall_x-camera_x)*focal/z for z in wraps
+                         if low<cx+(wall_x-camera_x)*focal/z<high)
             nodes=sorted(nodes)
             output=[]
             base=(161,170,166) if side<0 else (190,187,175)
             for x1,x2 in zip(nodes,nodes[1:]):
-                z1=(wall_x-camera_x)*FOCAL/(x1-cx)
-                z2=(wall_x-camera_x)*FOCAL/(x2-cx)
+                z1=(wall_x-camera_x)*focal/(x1-cx)
+                z2=(wall_x-camera_x)*focal/(x2-cx)
                 tile=math.floor((camera_z+(z1+z2)/2)/3.2)
                 uv1=(camera_z+z1)/3.2-tile
                 uv2=(camera_z+z2)/3.2-tile
-                top1=horizon-(TRAP_HEIGHT-eye)*FOCAL/z1
-                top2=horizon-(TRAP_HEIGHT-eye)*FOCAL/z2
-                bottom1=horizon+eye*FOCAL/z1
-                bottom2=horizon+eye*FOCAL/z2
+                top1=horizon-(TRAP_HEIGHT-eye)*focal/z1
+                top2=horizon-(TRAP_HEIGHT-eye)*focal/z2
+                bottom1=horizon+eye*focal/z1
+                bottom2=horizon+eye*focal/z2
                 quad(output,[vertex(x1,top1,uv1,0,z1,base),vertex(x2,top2,uv2,0,z2,base),
                              vertex(x2,bottom2,uv2,1,z2,base),vertex(x1,bottom1,uv1,1,z1,base)])
             submit('raw_wall',output)
+
+
+class Corridor(CorridorPlanes):
+    def __init__(self, view):
+        super().__init__(view)
+        for name,path in [('raw_wall','sprite/wall/materials/base_a.png'),
+                          ('raw_floor','sprite/surfaces/materials/floor_flagstone.png'),
+                          ('raw_ceiling','sprite/surfaces/materials/ceiling_damp.png'),
+                          ('blade','sprite/traps/iron_blade.png')]:
+            view.images[name]=view.load(path)
 
     def draw(self, game):
         v=self.view
