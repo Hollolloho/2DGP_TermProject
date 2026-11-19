@@ -1,4 +1,5 @@
 """타이틀 배경의 횃불, 먼지, 쥐 연출."""
+import json
 import math
 
 import pico2d.pico2d as p
@@ -64,10 +65,36 @@ class TitleTorch:
 
 class TitleMouse:
     def __init__(self, ui):
-        self.atlas = p.load_image(str(ui / 'title-mouse-run.png'))
-        self.frames = [p.SDL_Rect(col*56, row*32, 56, 32) for row in range(2) for col in range(4)]
+        data = json.loads((ui / 'title-mouse-grounded.json').read_text(encoding='utf-8'))
+        self.atlas = p.load_image(str(ui / data['image']))
+        width, height = data['cell']
+        columns = data['columns']
+        self.pivot = data['pivot']
+        self.clips = data['clips']
+        self.frames = [p.SDL_Rect(index % columns*width, index // columns*height, width, height)
+                       for index in range(sum(len(clip['indices']) for clip in self.clips.values()))]
         p.SDL_SetTextureBlendMode(self.atlas.texture, p.SDL_BLENDMODE_BLEND)
         p.SDL_SetTextureScaleMode(self.atlas.texture, p.SDL_ScaleModeLinear)
+        self.side_length = math.hypot(176, 12)
+        self.rear_length = math.hypot(92, 246)
+        self.side_distance = self.side_length*math.log(1/.94)/.06
+        self.rear_distance = self.rear_length*math.log(.94/.38)/.56
+        self.side_seconds = self.side_distance/144
+        self.rear_seconds = self.rear_distance/90
+        self.turn_seconds = .36
+
+    @staticmethod
+    def ground_shadow(x, y, scale, heading, opacity):
+        angle = math.radians(heading)
+        dx, dy = math.cos(angle), math.sin(angle)
+        for row in range(-3, 4):
+            half = 24*scale*math.sqrt(1-(row/4)**2)
+            across = row*scale
+            cx, cy = x-dy*across, y-1+dx*across
+            alpha = round(opacity*.15*(1-abs(row)/4))
+            p.SDL_SetRenderDrawColor(p.renderer, 12, 8, 4, alpha)
+            p.SDL_RenderDrawLine(p.renderer, round(cx-dx*half), round(cy-dy*half),
+                                 round(cx+dx*half), round(cy+dy*half))
 
     def draw(self, seconds):
         if seconds < 4.7:
@@ -76,29 +103,60 @@ class TitleMouse:
         cycle = (seconds-4.7) % 63.5
         start = next(at for at in (44.9, 32.0, 14.2, 0.0) if cycle >= at)
         age = cycle-start
-        progress = age/1.8
-        if progress >= 1.0:
-            return
-        opacity = round(255*min(1.0, age/.14, (1.0-progress)/.24))
-        if opacity == 0:
+        rear_age = age-self.side_seconds-self.turn_seconds
+        if rear_age >= self.rear_seconds:
             return
 
-        # 가까운 바닥을 왼쪽으로 가로지른 뒤 어두운 통로 안쪽으로 들어간다.
-        depth = progress*(1.2-.2*progress)
-        near = 1.0-depth
-        weights = (near**3, 3*near**2*depth, 3*near*depth**2, depth**3)
-        x = sum(value*weight for value, weight in zip((1140, 1038, 920, 856), weights))
-        y = sum(value*weight for value, weight in zip((678, 674, 608, 430), weights))
-        scale = 1.0-.68*depth
-        width, height = round(56*scale), round(32*scale)
-        foot = p.SDL_Point(round(width/2), round(26*height/32))
-        destination = p.SDL_Rect(round(x)-foot.x, round(y)-foot.y, width, height)
-        shade = round(255-78*depth)
+        offset_x = offset_y = 0.0
+        fade = min(1.0, age/.14)
+        if age < self.side_seconds:
+            distance = age*144
+            scale = math.exp(-.06*distance/self.side_length)
+            progress = (1-scale)/.06
+            x, y = 1124-176*progress, 688-12*progress
+            heading = math.degrees(math.atan2(12, 176))
+            clip = self.clips['side_left']
+            index = int(distance/clip['cycle_distance_px']*len(clip['indices'])) % len(clip['indices'])
+            frame_id = clip['indices'][index]
+            angle = heading-clip['heading_degrees_above_left']
+        elif rear_age < 0:
+            progress = (age-self.side_seconds)/self.turn_seconds
+            clip = self.clips['turn_upper_left']
+            index = min(len(clip['indices'])-1, int(progress*len(clip['indices'])))
+            frame_id = clip['indices'][index]
+            heading = clip['headings_degrees_above_left'][index]
+            x, y, scale, angle = 948, 676, .94, 0.0
+        else:
+            distance = rear_age*90
+            scale = .94*math.exp(-.56*distance/self.rear_length)
+            progress = (.94-scale)/.56
+            x, y = 948-92*progress, 676-246*progress
+            heading = math.degrees(math.atan2(246, 92))
+            clip = self.clips['rear_upper_left']
+            index = int(distance/clip['cycle_distance_px']*len(clip['indices'])) % len(clip['indices'])
+            frame_id = clip['indices'][index]
+            angle = heading-clip['heading_degrees_above_left']
+            # 후방 1~3번 접지 포즈의 뒷발 (55,84)→(55,86)→(55.5,86)을 등록 보정한다.
+            if index == 2:
+                offset_x, offset_y = 1.25, .17
+            elif index == 3:
+                offset_x, offset_y = 2.0, 2.33
+            elif index == 4:
+                offset_x, offset_y = 1.0, 1.17
+            fade *= min(1.0, (1-progress)/.24)
+
+        opacity = round(255*fade)
+        self.ground_shadow(x, y, scale, heading, opacity)
+        frame = self.frames[frame_id]
+        width, height = round(frame.w*scale), round(frame.h*scale)
+        pivot = p.SDL_Point(round((self.pivot[0]-offset_x)*width/frame.w),
+                            round((self.pivot[1]-offset_y)*height/frame.h))
+        destination = p.SDL_Rect(round(x)-pivot.x, round(y)-pivot.y, width, height)
+        shade = round(255-90*(1-scale)/.62)
         p.SDL_SetTextureColorMod(self.atlas.texture, shade, shade, shade)
         p.SDL_SetTextureAlphaMod(self.atlas.texture, opacity)
-        frame = self.frames[int(age*10) % len(self.frames)]
         p.SDL_RenderCopyEx(p.renderer, self.atlas.texture, frame, destination,
-                           -9+21*depth, foot, p.SDL_FLIP_NONE)
+                           angle, pivot, p.SDL_FLIP_NONE)
 
 
 # 시작 위상, 이동 시간(초), 통로 안 좌우 위치, 가까운 쪽 반경, 최대 불투명도.
