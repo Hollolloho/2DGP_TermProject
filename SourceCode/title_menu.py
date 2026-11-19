@@ -36,7 +36,7 @@ def discard_startup_input():
 def show_title_menu(project):
     ui = project / 'sprite/ui'
     background = p.load_image(str(ui / 'title-background.png'))
-    torch = TitleTorch(ui, background)
+    torch = TitleTorch(ui)
     heading = p.load_image(str(ui / 'title-heading.png'))
     plates = [p.load_image(str(ui / name)) for name in BUTTON_ART]
     for image in (heading, *plates):
