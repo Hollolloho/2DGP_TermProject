@@ -15,7 +15,7 @@ from .mouse_maze import MAZE, cell_center, cell_rect
 LW, LH, SCALE = 640, 400, 2
 MAP_RECT = (0, 0, LW, LH)
 PHASE_HUD_RECT = (222, 8, 196, 28)
-VITALS_HUD_RECT = (16, 318, 196, 68)
+VITALS_HUD_RECT = (15, 348, 138, 44)
 PUZZLE_OFFSET_X = 60
 BOULDER_SIGN_SCALE = .125
 BOULDER_SIGN_HEIGHT = 20
@@ -131,7 +131,7 @@ class View:
         if alpha != 255:
             p.SDL_SetTextureAlphaMod(image.texture, 255)
 
-    def text(self, text, x, y, color=(199, 203, 189), size='small', center=False):
+    def text(self, text, x, y, color=(199, 203, 189), size='small', center=False, right=False):
         key=(text,color,size)
         image=self.text_cache.get(key)
         if image is None:
@@ -146,7 +146,7 @@ class View:
             self.text_cache[key]=image
             if len(self.text_cache)>512:
                 self.text_cache.pop(next(iter(self.text_cache)))
-        image.draw(x if center else x+image.w/2,LH-y)
+        image.draw(x if center else x-image.w/2 if right else x+image.w/2,LH-y)
 
     def attack_frame_index(self, game):
         clip = self.player_catalog['clips'].get(game.attack_clip)
@@ -623,6 +623,23 @@ class View:
             return cell, 'F 퍼즐'
         return None
 
+    def hud_vitals(self, game):
+        def label(value, x, y, color=(235,224,200), right=False):
+            self.text(value,x+1,y+1,(7,9,9),right=right)
+            self.text(value,x,y,color,right=right)
+
+        for y,name,value,height,color in ((356,'HP',game.player.hp,6,(155,76,59)),
+                                          (370,'ST',game.player.stamina,4,(110,130,91))):
+            label(name,16,y)
+            label(f'{int(value):3d}',150,y,right=True)
+            self.rectangle(39,y-height/2-1,86,height+2,(8,11,12))
+            self.rectangle(40,y-height/2,84,height,(35,32,29))
+            fill = round(84*max(0.,min(1.,value/100)))
+            if fill:
+                self.rectangle(40,y-height/2,fill,height,color)
+        label('횃불 · 켜짐' if game.player.torch else '횃불 · 없음',16,384,
+              (223,178,101) if game.player.torch else (160,160,145))
+
     def hud(self, game, fps=0):
         remaining = max(0., PHASE_SECONDS-game.phase_time)
         warning = game.phase_warning or game.state == 'shifting'
@@ -642,15 +659,7 @@ class View:
             self.hud_panel((238,42,164,20))
             self.text(puzzle_status,320,52,(211,194,145),size='font',center=True)
 
-        self.hud_panel(VITALS_HUD_RECT)
-        for y,label,value,color in ((332,'HP',game.player.hp,(155,76,59)),
-                                   (353,'ST',game.player.stamina,(119,139,89))):
-            self.text(label,28,y,(235,224,200),size='hud_font')
-            self.text(f'{int(value):3d}',174,y,(235,224,200),size='hud_font')
-            self.rectangle(60,y-4,104,8,(41,39,34))
-            self.rectangle(60,y-4,104*max(0.,min(1.,value/100)),8,color)
-        self.text('횃불 · 켜짐' if game.player.torch else '횃불 · 없음',28,374,
-                  (223,178,101) if game.player.torch else (160,160,145),size='font')
+        self.hud_vitals(game)
 
         if game.state == 'explore' and not game.map_open:
             self.hud_panel((548,366,76,22))

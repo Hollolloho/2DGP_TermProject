@@ -10,7 +10,7 @@ from SourceCode.maze_model import PHASE_SECONDS, PHASE_WARNING_SECONDS, SHIFT_SW
 from SourceCode.maze_model import WALK_SPEED, RUN_SPEED, PLAYER_HALF_SIZE
 from SourceCode.maze_model import GUARD_DAMAGE
 from SourceCode.game_view import LW, LH, SCALE, project
-from SourceCode.game_view import PUZZLE_OFFSET_X, PHASE_HUD_RECT, VITALS_HUD_RECT
+from SourceCode.game_view import PUZZLE_OFFSET_X, PHASE_HUD_RECT
 from SourceCode.trap_view import project as project_trap
 from SourceCode.mouse_maze import BOARD, MAZE, START_CELL, GOAL_CELL, cell_center
 
@@ -881,9 +881,10 @@ def run(app):
             samples = []
             app.view.select_readback_target()
             try:
-                for region in (PHASE_HUD_RECT,VITALS_HUD_RECT):
-                    x,y,w,h = region
-                    rect = p.SDL_Rect((x+4)*SCALE,(y+4)*SCALE,(w-8)*SCALE,(h-8)*SCALE)
+                x,y,w,h = PHASE_HUD_RECT
+                # 상태 글자 주변은 투명하므로 바의 불투명 트랙만 비교한다.
+                for x,y,w,h in ((x+4,y+4,w-8,h-8),(40,353,84,6),(40,368,84,4)):
+                    rect = p.SDL_Rect(x*SCALE,y*SCALE,w*SCALE,h*SCALE)
                     pixels = (ctypes.c_ubyte*(rect.w*rect.h*4))()
                     assert p.SDL_RenderReadPixels(p.renderer,rect,p.SDL_PIXELFORMAT_RGBA32,pixels,rect.w*4) == 0
                     samples.append(bytes(pixels))
