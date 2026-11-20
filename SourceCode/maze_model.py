@@ -31,6 +31,9 @@ SHIFT_SECONDS, SHIFT_SWAP_AT = .6, .3
 TRAP_LENGTH, TRAP_HALF_WIDTH, TRAP_HEIGHT = 9.0, 1.6, 3.0
 TRAP_LATERAL, BLADE_RADIUS, PLAYER_RADIUS = 1.1, .34, .20
 TRAP_PLANES = (.30, .58, .82)
+SPRINT_STAMINA_COST = 18.0  # ST/s, 일반 미로와 두 함정방의 공통 소모량.
+# 외부 격자 통로 칸 수. 기존 함정의 최소 우회·도착 후 탐색 조건을 재사용한다.
+BOULDER_MIN_BYPASS_CELLS, BOULDER_MIN_REMAINING_CELLS = 15, 10
 
 
 def project(x, y):
@@ -108,6 +111,11 @@ def choose_torch_mount(grid, path, reserved):
     return path[1], None
 
 
+def landmark_area(points):
+    """주요 지점과 복귀 위치의 주변 3×3 격자를 반환한다."""
+    return {(x+dx, y+dy) for x,y in points for dx in (-1,0,1) for dy in (-1,0,1)}
+
+
 class MazeLayouts:
     """한 판에서 반복해서 사용할 낮·밤·새벽 지형을 준비한다.
 
@@ -119,12 +127,7 @@ class MazeLayouts:
 
     def __init__(self, base_grid, seed, landmarks):
         self.landmarks = landmarks
-        self.protected_cells = set()
-        for x, y in landmarks.values():
-            # 테스트 보존 범위: 주요 지점과 함정 복귀 위치 주변 3×3.
-            for dy in (-1, 0, 1):
-                for dx in (-1, 0, 1):
-                    self.protected_cells.add((x + dx, y + dy))
+        self.protected_cells = landmark_area(landmarks.values())
 
         self.grids = [[row[:] for row in base_grid]]
         used_cells = set()
@@ -255,6 +258,7 @@ class Game:
                                    if self.torch_wall is not None else None)
         self.trap_discovered, self.trap_completed = False, False
         self.landing_until = 0.0
+        self.landing_cell = None
         protected=(self.spawn,self.torch_cell,self.trap_cell,self.trap_exit,self.fountain,self.exit)
         self.guard_home = guard_position(self.grid,path,protected,seed)
         self.guard = self.guard_home
@@ -265,6 +269,10 @@ class Game:
         }
         self.maze_layouts = MazeLayouts(self.grid, seed, landmarks)
         self.puzzle_gate = self.choose_puzzle_gate()
+        self.boulder_entry, self.boulder_exit = self.choose_boulder_shortcut() or (None, None)
+        if self.boulder_entry is not None:
+            self.maze_layouts.landmarks.update(boulder_entry=self.boulder_entry, boulder_exit=self.boulder_exit)
+            self.maze_layouts.protected_cells.update(landmark_area((self.boulder_entry, self.boulder_exit)))
         self.puzzle = MouseMaze()
         self.puzzle_reserved_phase = None
         self.puzzle_open = False
@@ -300,6 +308,10 @@ class Game:
         self.visible = set()
         self.map_open, self.reveal_all = False, False
         self.banner, self.banner_until = '횃불에 접근해 F를 눌러 보세요', 5.0
+        self.trap_kind = 'blade'
+        self.boulder_room = None
+        self.boulder_discovered = self.boulder_completed = False
+        self.boulder_return_requested = self.boulder_exit_requested = False
         self.trap_progress, self.trap_x, self.trap_cooldown = 0.0, 0.0, 0.0
         self.trap_return = None
         self.trap_return_direction = self.player.direction
@@ -317,6 +329,52 @@ class Game:
             transitions=[['rest', '*', 'idle'], ['walk_now', '*', 'walk'],
                          ['sprint_now', '*', 'sprint'], ['swing', '*', 'attack']])
         self.update_visibility()
+
+    def choose_boulder_shortcut(self):
+        """검증된 117 첫 회차 후보만 선택하고, 안전하지 않으면 생략한다."""
+        if (self.seed, self.run_number) != (117, 0):
+            return None
+        entry, arrival = (9, 6), (11, 13)
+        return (entry, arrival) if self.valid_boulder_shortcut(entry, arrival) else None
+
+    def valid_boulder_shortcut(self, entry, arrival):
+        """지형을 바꾸지 않고 세 시간대×퍼즐 문 개폐의 경로·복귀 안전을 검사한다."""
+        if any(not (1 <= x < COLS-1 and 1 <= y < ROWS-1) for x,y in (entry, arrival)):
+            return False
+        entry_area, arrival_area = landmark_area((entry,)), landmark_area((arrival,))
+        if entry_area & arrival_area:
+            return False
+        area = entry_area | arrival_area
+        layouts = self.maze_layouts
+        existing = [cell for name,cell in layouts.landmarks.items()
+                    if name not in ('boulder_entry', 'boulder_exit')]
+        if area & landmark_area(existing) or (self.puzzle_gate and area & set(self.puzzle_gate)):
+            return False
+        for base in layouts.grids:
+            if any(base[y][x] != layouts.grids[0][y][x] for x,y in area):
+                return False
+            for opened in (False, True):
+                grid = [row[:] for row in base]
+                if self.puzzle_gate:
+                    x,y = self.puzzle_gate[0]
+                    grid[y][x] = int(not opened)
+                if any(self.solid(x,y,grid) for x,y in existing):
+                    return False
+                if not all(self.can_stand(x+.5,y+.5,grid) for x,y in (entry, arrival)):
+                    return False
+                if not layouts.is_valid(grid):
+                    return False
+                remaining = distances(grid, self.exit)
+                if remaining[arrival] < BOULDER_MIN_REMAINING_CELLS:
+                    return False
+                if distances(grid, entry)[arrival] < BOULDER_MIN_BYPASS_CELLS:
+                    return False
+                if distances(grid, self.spawn)[entry]+remaining[arrival] >= remaining[self.spawn]:
+                    return False
+                guard = distances(grid, self.guard_home)
+                if any(guard[cell] < 4 for cell in (entry, arrival)):
+                    return False
+        return True
 
     def choose_puzzle_gate(self):
         layouts = self.maze_layouts
@@ -557,26 +615,97 @@ class Game:
         self.visited.add((math.floor(player.x), math.floor(player.y)))
         if self.trap_cell in visible:
             self.trap_discovered = True
+        if self.boulder_entry in visible:
+            self.boulder_discovered = True
+
+    def _enter_trap(self, kind):
+        self.trap_kind = kind
+        self.trap_return = self.player.x, self.player.y
+        self.trap_return_direction = self.player.direction
+        self.trap_progress = self.trap_x = self.trap_cooldown = 0.0
+        self.trap_velocity = self.trap_side_velocity = self.trap_stride = 0.0
+        self.boulder_return_requested = self.boulder_exit_requested = False
+        self.map_open = False
+        self.attack_facing = self.attack_clip = None
+        self.attack_hits_ms = ()
+        self.guard_attack_at = None
+        self.guard_seen_until = 0.
+        self.enter_room()
+
+    def boulder_available(self):
+        return (self.state == 'explore' and not self.map_open and self.boulder_entry is not None
+                and self.close_to(self.boulder_entry))
+
+    def enter_boulder(self):
+        """C 앞에서 모델에 진입한다. 판 시간과 공유 플레이어 자원은 유지한다."""
+        if not self.boulder_available():
+            return False
+        if self.boulder_room is None:
+            from BoulderPractice.boulder_practice import Practice
+            self.boulder_room = Practice(self.player)
+        else:
+            self.boulder_room.reset()
+        self._enter_trap('boulder')
+        self.player.rest()
+        self.boulder_discovered = True
+        self.message('돌 출발까지 5초 · 지금 이동할 수 있습니다', 5)
+        return True
+
+    def request_boulder_return(self):
+        if self.state == 'trap' and self.trap_kind == 'boulder':
+            self.boulder_return_requested = True
+
+    def request_boulder_exit(self):
+        if self.state == 'trap' and self.trap_kind == 'boulder':
+            self.boulder_exit_requested = True
+
+    def update_boulder(self, dt, dx, dy, running, look_back):
+        """시간대 경계 뒤 Esc, 돌 충돌, F/자동 출구 순으로 결과를 확정한다."""
+        returning, exiting = self.boulder_return_requested, self.boulder_exit_requested
+        self.boulder_return_requested = self.boulder_exit_requested = False
+        if returning:
+            self.return_from_trap()
+            return
+        room = self.boulder_room
+        previous_stride = room.stride
+        room.advance(dt, dx, -dy, float(running), look_back)
+        moved = room.stride > previous_stride
+        if moved and room.running:
+            self.player.stamina = max(0., self.player.stamina-dt*SPRINT_STAMINA_COST)
+            self.player.sprint_now()
+        elif moved:
+            self.player.walk_now()
+        else:
+            self.player.rest()
+        if room.ball_touching:
+            self.player.hp = 0
+            room.vx = room.vz = 0.
+            room.running = False
+            self.player.rest()
+            self.fail()
+            self.message('돌에 깔렸습니다 · R로 새 회차', 8)
+            return
+        if exiting:
+            room.use_exit()
+        room.automatic_exit()
+        if room.state == 'clear':
+            self.return_from_trap(completed=True)
 
     def interact(self):
+        if self.state == 'trap' and self.trap_kind == 'boulder':
+            self.request_boulder_exit()
+            return
         if self.state != 'explore' or self.map_open:
             return
         if not self.player.torch and self.close_to(self.torch_cell):
             self.player.torch = True
             self.message('횃불 획득 · 원형 시야 확대')
         elif self.close_to(self.trap_cell):
-            self.trap_return = self.player.x, self.player.y
-            self.trap_return_direction = self.player.direction
-            self.trap_progress = self.trap_x = self.trap_cooldown = 0.0
-            self.trap_velocity = self.trap_side_velocity = self.trap_stride = 0.0
+            self._enter_trap('blade')
             self.trap_discovered = True
-            self.map_open = False
-            self.attack_facing = self.attack_clip = None
-            self.attack_hits_ms = ()
-            self.guard_attack_at = None
-            self.guard_seen_until = 0.
-            self.enter_room()
             self.message(f'A 입구 → B 출구 · 일반 통로 {self.shortcut_distance}칸을 우회', 5)
+        elif self.boulder_available():
+            self.enter_boulder()
         elif self.close_to(self.fountain):
             if self.fountain_used:
                 self.message('이미 사용한 샘물입니다')
@@ -599,16 +728,28 @@ class Game:
     def return_from_trap(self, completed=False):
         if self.state != 'trap':
             return
-        self.player.x, self.player.y = ((self.trap_exit[0]+.5, self.trap_exit[1]+.5)
+        boulder = self.trap_kind == 'boulder'
+        target = self.boulder_exit if boulder else self.trap_exit
+        self.player.x, self.player.y = ((target[0]+.5, target[1]+.5)
                                       if completed else self.trap_return)
         self.player.direction = self.trap_return_direction
         self.leave_room()
+        self.boulder_return_requested = self.boulder_exit_requested = False
+        if boulder and self.boulder_room is not None:
+            self.boulder_room.vx = self.boulder_room.vz = 0.
+            self.boulder_room.running = self.boulder_room.look_back = False
+            self.player.rest()
         if completed:
-            self.trap_completed = self.trap_discovered = True
+            if boulder:
+                self.boulder_completed = self.boulder_discovered = True
+                self.message('D 도착 · M 지도에서 현재 위치 확인', 8)
+            else:
+                self.trap_completed = self.trap_discovered = True
+                self.message(f'B 출구 도착 · 일반 통로 {self.shortcut_distance}칸 우회 · M 지도 확인',8)
             self.landing_until = self.time+10
-            self.message(f'B 출구 도착 · 일반 통로 {self.shortcut_distance}칸 우회 · M 지도 확인',8)
+            self.landing_cell = target
         else:
-            self.message('A 입구 · 입장 전 위치로 복귀')
+            self.message(f'{"C" if boulder else "A"} 입구 · 입장 전 위치로 복귀')
         self.trap_velocity = self.trap_side_velocity = 0.0
         self.update_visibility()
 
@@ -701,7 +842,7 @@ class Game:
         else:
             self.message('수호자 피격 · F로 이어 풀기' if was_puzzling else '수호자 피격')
 
-    def update(self, dt, dx=0, dy=0, sprint=False):
+    def update(self, dt, dx=0, dy=0, sprint=False, *, look_back=False):
         dt = min(.05, max(0, dt))
         self.ui_time += dt
         if self.state in ('clear', 'failed'):
@@ -719,7 +860,7 @@ class Game:
         self.time += dt
         previous_attack_time = self.attack_time
         self.attack_time += dt
-        sprint_cost = dt*18
+        sprint_cost = dt*SPRINT_STAMINA_COST
         # A sprint tick must be funded before this tick's dawn recovery.
         running = sprint and self.player.stamina >= sprint_cost
         if self.phase == 2:
@@ -728,6 +869,9 @@ class Game:
             self.update_guard(dt)
             return
         if self.state == 'trap':
+            if self.trap_kind == 'boulder':
+                self.update_boulder(dt, dx, dy, running, look_back)
+                return
             target_speed = -dy*(2.7 if running else 1.8)
             self.trap_velocity += max(-10*dt,min(10*dt,target_speed-self.trap_velocity))
             self.trap_side_velocity += max(-12*dt,min(12*dt,dx*1.8-self.trap_side_velocity))

@@ -22,21 +22,24 @@ class Audio:
             self.game = game
             self.previous_mode = None
             self.warning_played = False
+        kind = game.trap_kind if game.state == 'trap' else None
+        mode = game.state, kind
+        changed = self.previous_mode != mode
+        if changed:
+            self.step_index = int(game.trap_stride/.62) if kind == 'blade' else -1
+            self.whoosh_index = -1
         if not game.phase_warning:
             self.warning_played = False
         if game.phase_warning and not self.warning_played:
             self.warning_played = True
-            # 전용 음향 연결 전에는 기존 효과음을 예고·돌 움직임에 재사용한다.
+            # 시간대 예고는 칼날 근접 판정과 독립적으로 같은 효과음을 재사용한다.
             if self.blade:
                 self.blade.play()
-        if game.state == 'shifting' and self.previous_mode != 'shifting' and self.step:
+        if game.state == 'shifting' and changed and self.step:
             self.step.play()
-        if game.state!='trap':
-            self.previous_mode=game.state
+        self.previous_mode = mode
+        if kind != 'blade':
             return
-        if self.previous_mode!='trap':
-            self.step_index=int(game.trap_stride/.62)
-            self.whoosh_index=-1
         index=int(game.trap_stride/.62)
         if index!=self.step_index and self.step:
             self.step.play()
@@ -46,7 +49,6 @@ class Audio:
         if near and near[0]!=self.whoosh_index:
             self.whoosh_index=near[0]
             if self.blade: self.blade.play()
-        self.previous_mode=game.state
 
     def close(self):
         self.step=self.blade=None

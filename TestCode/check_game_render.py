@@ -39,6 +39,8 @@ def inject_mouse(event_type, point, held=True):
 
 
 def run(app):
+    from .check_boulder_render import run as check_boulder_render
+    check_boulder_render(app)
     output = app.output
     from math import ceil, hypot, isclose
 

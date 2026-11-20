@@ -25,7 +25,8 @@ EXITS=(('narrow',-1,46,.38),('wide',1,52,.70))
 
 class Practice:
     """Metre-based rules, independent of rendering. Contact counts, never kills."""
-    def __init__(self):
+    def __init__(self, player=None):
+        self.player=player
         Machine(model=self,states=['ready','chasing','clear'],initial='ready',auto_transitions=False,
                 transitions=[['release','ready','chasing'],['finish',['ready','chasing'],'clear'],['restart','*','ready']])
         self.reset()
@@ -33,8 +34,9 @@ class Practice:
     def reset(self):
         self.restart()
         self.time=self.x=self.z=self.vx=self.vz=self.stride=0.0
-        self.stamina=100.0
-        self.hp=100
+        if self.player is None:
+            self.stamina=100.0
+            self.hp=100
         self.ball_z=-3.0
         self.ball_speed=self.ball_distance=0.0
         self.contacts=0
@@ -46,6 +48,22 @@ class Practice:
 
     @property
     def gap(self):return self.z-self.ball_z-RADIUS-PLAYER_RADIUS
+
+    @property
+    def stamina(self):return self.player.stamina if self.player is not None else self._stamina
+
+    @stamina.setter
+    def stamina(self,value):
+        if self.player is None:self._stamina=value
+        else:self.player.stamina=value
+
+    @property
+    def hp(self):return self.player.hp if self.player is not None else self._hp
+
+    @hp.setter
+    def hp(self,value):
+        if self.player is None:self._hp=value
+        else:self.player.hp=value
 
     @staticmethod
     def can_stand(x,z):
@@ -69,12 +87,22 @@ class Practice:
         dt=max(0,min(.05,dt))
         self.look_back=look_back
         if self.state=='clear' or not dt:return
+        fraction=min(1,self.stamina/(25*dt)) if sprint and math.hypot(dx,forward) else 0
+        self.advance(dt,dx,forward,fraction,look_back)
+        if self.running:self.stamina=max(0,self.stamina-25*dt*fraction)
+        self.automatic_exit()
+
+    def advance(self,dt,dx=0,forward=0,sprint_fraction=0,look_back=False):
+        """이동과 돌 진행만 갱신한다. 자원·즉사·출구 확정은 호출자가 처리한다."""
+        dt=max(0,min(.05,dt))
+        self.look_back=look_back
+        if self.state=='clear' or not dt:return
         self.time+=dt
         if self.state=='ready' and self.time>=5:self.release()
         # Pushing along a side wall should not waste forward velocity.
         if abs(self.x)>=1.47 and dx*self.x>0:dx=0
         magnitude=math.hypot(dx,forward)
-        fraction=min(1,self.stamina/(25*dt)) if sprint and magnitude else 0
+        fraction=sprint_fraction if magnitude else 0
         speed=2.55+(4.70-2.55)*fraction
         tx,tz=(dx/magnitude*speed,forward/magnitude*speed) if magnitude else (0,0)
         self.vx+=max(-15*dt,min(15*dt,tx-self.vx))
@@ -90,7 +118,6 @@ class Practice:
         travelled=math.hypot(self.x-old_x,self.z-old_z)
         self.stride+=travelled
         self.running=bool(fraction and travelled>.0001)
-        if self.running:self.stamina=max(0,self.stamina-25*dt*fraction)
         if self.state=='chasing':
             self.ball_speed=min(3.7,self.ball_speed+1.8*dt)
             movement=self.ball_speed*dt
@@ -104,15 +131,20 @@ class Practice:
             # Invulnerability changes the damage result, never the trajectory.
             # Count only entry into overlap, including a later genuine recontact.
             self.ball_touching=touching
+
+    def automatic_exit(self):
+        if self.state=='clear':return False
         for name,side,z,half in EXITS:
             if side*self.x>1.32 and abs(self.z-z)<half:
                 self.exit_used=name;self.finish();self.vx=self.vz=0
-                break
+                return True
+        return False
 
 
 class View:
-    def __init__(self,p,w,h):
+    def __init__(self,p,w,h,*,top=72):
         self.p,self.w,self.h=p,w,h
+        self.top=top
         self.focal=w*.62
         self.images={}
         for name,path in [('raw_wall',ROOT/'sprite/wall/materials/base_a.png'),
@@ -143,15 +175,9 @@ class View:
         self.canvas=p.SDL_CreateTexture(p.renderer,p.SDL_PIXELFORMAT_RGBA8888,p.SDL_TEXTUREACCESS_TARGET,w,h)
         assert self.canvas,p.SDL_GetError()
         p.SDL_SetTextureScaleMode(self.canvas,p.SDL_ScaleModeLinear)
-        # Reuse the existing corridor planes in this dedicated process only.
-        from SourceCode import trap_view as corridor
-        corridor.WIDTH,corridor.HEIGHT,corridor.TOP=w,h,72
-        corridor.FOCAL=self.focal
-        corridor.TRAP_LENGTH=LENGTH+30
-        corridor.TRAP_HALF_WIDTH=HALF_WIDTH
-        corridor.camera=self.camera
-        self.planes=corridor.Corridor.__new__(corridor.Corridor)
-        self.planes.view=self
+        from SourceCode.trap_view import CorridorPlanes
+        self.planes=CorridorPlanes(self,width=w,height=h,top=top,focal=self.focal,
+                                   length=LENGTH+30,half_width=HALF_WIDTH,camera=self.camera)
         self.vertex=struct.Struct('<ffBBBBff')
         from .boulder_volume import Boulder
         self.rock=Boulder(self,self.images['raw_boulder'],RADIUS)
@@ -262,10 +288,9 @@ class View:
         for points in faces:
             self.quad(g,'raw_wall',points,[(0,0),(1,0),(1,1),(0,1)],tint)
 
-    def draw(self,g):
-        draw_started=time.perf_counter()
+    def draw_scene(self,g):
+        """현재 렌더 타깃에 장면만 그린다. HUD·화면 전환은 호출자가 담당한다."""
         p=self.p;w,h=self.w,self.h
-        p.SDL_SetRenderTarget(p.renderer,self.canvas)
         p.SDL_SetRenderDrawColor(p.renderer,8,11,11,255);p.SDL_RenderClear(p.renderer)
         self.planes.draw_planes(g)
         # A real end wall keeps the last side exit from looking like an infinite corridor.
@@ -289,7 +314,13 @@ class View:
                 self.rock.body(g)
                 self.rock.dust(g,front=True)
         if g.ball_z<LENGTH+1.3:self.rock.inside_overlay(g)
-        if g.hit_until>g.time:self.rect(0,72,w,h-72,(160,28,19,round(70*(g.hit_until-g.time)/.45)))
+        if g.hit_until>g.time:self.rect(0,self.top,w,h-self.top,(160,28,19,round(70*(g.hit_until-g.time)/.45)))
+
+    def draw(self,g):
+        draw_started=time.perf_counter()
+        p=self.p;w,h=self.w,self.h
+        p.SDL_SetRenderTarget(p.renderer,self.canvas)
+        self.draw_scene(g)
         self.rect(0,0,w,72,(12,17,18,245));self.rect(0,h-100,w,100,(12,17,18,235))
         self.text('돌 추격 · 무적 연습' if self.room_ready else '돌 추격 · 임시 사물',24,10,big=False)
         if g.state=='ready':status=f'{max(0,5-g.time):.1f}초 후 돌 출발 · 먼저 이동하세요'

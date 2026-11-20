@@ -54,16 +54,19 @@ class View:
         self.dagger_end_ms = self.dagger_fx['start_ms']+self.dagger_fx['duration_ms']
         self.images['dagger-slash'] = self.load(dagger_dir/self.dagger_fx['image'], pixel=True)
         self.images['mouse-maze-panel'] = self.load('sprite/ui/mouse-maze-panel.png')
+        self.images['boulder-warning-sign'] = self.load('sprite/ui/boulder-warning-sign.png')
         self.logical = self.target(LW, LH)
         self.display = self.target(LW*SCALE, LH*SCALE)
         self.display_ready = False
         self.corridor = Corridor(self)
+        self.boulder_scene = None
         self.origin, self.world_scale = (0, 0), 1
         self.camera, self.camera_game = None, None
         self.light_game, self.light_time, self.torch_light = None, 0., 0.
         self.discovery, self.exposure = {}, {}
         self.light_revision = -1
         self.last_mode, self.mode_changed = None, -10
+        self.last_trap_kind = None
         self.mode_game = None
         self.mode_fade_strength = 1.
 
@@ -460,8 +463,9 @@ class View:
                 if (x, y) in game.visible or game.reveal_all:
                     sx, sy = self.world(x+.5, y+.5)
                     markers.append(('P', sx-12*self.world_scale, sy, color))
-        for cell, arrival in ((game.trap_cell, False), (game.trap_exit, True)):
-            if cell not in game.visible and not game.reveal_all:
+        for cell, arrival, label in ((game.trap_cell, False, 'A'), (game.trap_exit, True, 'B'),
+                                     (game.boulder_entry, False, 'C'), (game.boulder_exit, True, 'D')):
+            if cell is None or (cell not in game.visible and not game.reveal_all):
                 continue
             x, y, facing = self.shortcut_mount(game, cell)
             place(self.shortcut, x, y, facing, arrival, self.tile_tint(game, *cell))
@@ -471,8 +475,8 @@ class View:
                     show_silhouette = True
             sx, sy = self.world(cell[0]+.5, cell[1]+.5)
             color = (127,197,183) if arrival else (218,175,107)
-            markers.append(('B' if arrival else 'A', sx+18*self.world_scale, sy, color))
-            if arrival and game.time < game.landing_until:
+            markers.append((label, sx+18*self.world_scale, sy, color))
+            if arrival and game.landing_cell == cell and game.time < game.landing_until:
                 pulse = math.sin(game.time*5)
                 radius = (12+3*pulse)*self.world_scale
                 self.rectangle(sx-radius, sy+6*self.world_scale, radius*2, 2,
@@ -493,9 +497,15 @@ class View:
         p.SDL_RenderSetClipRect(p.renderer, None)
 
     def trap(self, game):
-        self.corridor.draw(game)
+        if game.trap_kind == 'boulder':
+            if self.boulder_scene is None:
+                from BoulderPractice.boulder_practice import View as BoulderView
+                self.boulder_scene = BoulderView(p, LW*SCALE, LH*SCALE, top=30*SCALE)
+            self.boulder_scene.draw_scene(game.boulder_room)
+        else:
+            self.corridor.draw(game)
 
-    def hud_trap(self, game):
+    def hud_room_header(self, game, title, route):
         self.rectangle(0,0,640,30,(12,18,22,235))
         self.text('HP',12,14,(207,202,184))
         self.rectangle(33,11,80,5,(48,45,41))
@@ -503,9 +513,34 @@ class View:
         self.text('ST',126,14,(207,202,184))
         self.rectangle(148,11,70,5,(48,45,41))
         self.rectangle(148,11,game.player.stamina*.7,5,(113,143,106))
-        self.text('칼날의 통로',272,15,(217,198,154),size='font')
+        self.text(title,272,15,(217,198,154),size='font')
         self.text(f'{PHASES[game.phase]} {math.ceil(PHASE_SECONDS-game.phase_time):02d}s',417,14,(217,190,131))
-        self.text('A 입구 → B 출구',537,14,(134,192,179))
+        self.text(route,537,14,(134,192,179))
+
+    def hud_boulder(self, game):
+        from BoulderPractice.boulder_practice import LENGTH
+        room = game.boulder_room
+        self.hud_room_header(game, '돌 추격 통로', 'C 입구 → D 도착')
+        self.rectangle(0,348,640,52,(12,18,22,235))
+        if room.state == 'ready':
+            status = f'돌 출발까지 {max(0.,5.-room.time):.1f}초 · 지금 이동할 수 있습니다'
+        elif room.look_back:
+            status = '뒤를 확인하는 중 · W는 계속 전진'
+        else:
+            status = '장애물을 우회하고 측면 출구로 탈출하세요'
+        self.text(status,16,361,(228,204,153),size='font')
+        self.text(f'뒤쪽 돌 {max(0.,room.gap):.1f} m',472,361,(227,158,111),size='font')
+        self.text('W/S 이동  A/D 장애물 우회  Shift 달리기  Q 뒤 확인  Esc 복귀',16,382,(202,199,179))
+        self.rectangle(0,397,640,3,(28,32,31))
+        self.rectangle(0,397,640*min(1.,room.z/LENGTH),3,(179,151,94))
+        if room.exit_nearby():
+            self.rectangle(250,306,140,26,(13,17,18,220))
+            self.text('F  측면 출구 이용',265,319,(242,219,148),size='font')
+        if game.phase_warning:
+            self.text('곧 미로 변형 · 입장 전 위치로 복귀',190,69,(239,183,104),size='font')
+
+    def hud_trap(self, game):
+        self.hud_room_header(game, '칼날의 통로', 'A 입구 → B 출구')
         self.rectangle(0,397,640,3,(28,32,31))
         self.rectangle(0,397,640*game.trap_progress,3,(179,151,94))
         self.rectangle(157,368,326,22,(13,17,18,210))
@@ -563,6 +598,16 @@ class View:
             self.rectangle(10,371,490,23,(10,14,17,230))
             self.text(game.banner,19,383,(225,208,164),size='font')
         self.text(f'{fps:.0f} FPS',574,387,(106,120,119))
+        if game.boulder_available():
+            self.boulder_warning(game)
+
+    def boulder_warning(self, game):
+        self.rectangle(16,292,340,72,(20,17,14,238))
+        self.image('boulder-warning-sign',(24,302,52,52))
+        self.text('C 돌 추격 · 돌에 닿으면 즉사',86,304,(241,186,120),size='font')
+        self.text('진입 5초 뒤 뒤에서 돌 출발',86,322,(224,213,188))
+        self.text('장애물을 피해 측면 출구로',86,338,(224,213,188))
+        self.text('F 진입',86,354,(241,207,137),size='font')
 
     def puzzle_overlay(self, game):
         parchment = (234, 219, 183)
@@ -689,9 +734,16 @@ class View:
         if game.trap_completed:
             bx,by=game.trap_exit
             self.badge('B',ox+(bx+.5)*step,oy+(by+.5)*step,(127,197,183))
+        if game.boulder_discovered:
+            cx,cy = game.boulder_entry
+            self.badge('C',ox+(cx+.5)*step+9,oy+(cy+.5)*step,(218,175,107))
+        if game.boulder_completed:
+            dx,dy = game.boulder_exit
+            self.badge('D',ox+(dx+.5)*step+9,oy+(dy+.5)*step,(127,197,183))
         x,y=game.player.x,game.player.y
         self.rectangle(ox+x*step-2,oy+y*step-2,5,5,(231,214,156))
-        self.text('노랑: 플레이어    A: 함정방 입구    B: 도착점',145,370)
+        self.text('노랑: 플레이어    A/B: 칼날 입구·도착점',145,361)
+        self.text('C/D: 돌 입구·도착점',145,381)
         if game.guard_attack_at is not None:
             self.text('수호자 공격 예고',459,37,(255,204,112),size='font')
 
@@ -706,7 +758,10 @@ class View:
         else:
             p.SDL_SetRenderTarget(p.renderer,self.logical)
             self.quarter(game)
-        self.hud_trap(game) if native_trap else self.hud(game,fps)
+        if native_trap:
+            self.hud_boulder(game) if game.trap_kind == 'boulder' else self.hud_trap(game)
+        else:
+            self.hud(game,fps)
         if game.map_open and game.state=='explore':
             self.map_overlay(game)
         if game.state == 'puzzle':
@@ -721,12 +776,14 @@ class View:
             self.text('체력이 0이 됐습니다 · R 새 회차',230,236,size='font')
         # 탐색↔변형에는 전체 암전을 넣지 않아 벽 연출과 고정 HUD가 보이게 한다.
         display_mode = 'explore' if game.state in ('shifting', 'puzzle') else game.state
-        if self.mode_game is not game or self.last_mode != display_mode:
+        kind = game.trap_kind if native_trap else None
+        if self.mode_game is not game or self.last_mode != display_mode or self.last_trap_kind != kind:
             returning = self.mode_game is game and self.last_mode == 'trap' and display_mode == 'explore'
             # Show the landing point even on the first frame of the return fade.
             self.mode_fade_strength = .5 if returning else 1.
             self.mode_game = game
             self.last_mode, self.mode_changed = display_mode, game.ui_time
+            self.last_trap_kind = kind
         fade=max(0,1-(game.ui_time-self.mode_changed)/.28)
         if fade:
             self.rectangle(0,0,LW,LH,(0,0,0,round(255*fade*self.mode_fade_strength)))
@@ -762,6 +819,8 @@ class View:
             p.SDL_SetRenderTarget(p.renderer,None)
 
     def close(self):
+        if self.boulder_scene is not None:
+            self.boulder_scene.close()
         self.atlases.clear()
         self.images.clear()
         self.effects.clear()
