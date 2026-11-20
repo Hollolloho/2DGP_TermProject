@@ -17,7 +17,8 @@ MAP_RECT = (0, 0, LW, LH)
 PHASE_HUD_RECT = (222, 8, 196, 28)
 VITALS_HUD_RECT = (16, 318, 196, 68)
 PUZZLE_OFFSET_X = 60
-BOULDER_WARNING_RECT = (284, 282, 340, 72)
+BOULDER_SIGN_SCALE = .125
+BOULDER_SIGN_HEIGHT = 20
 WALL_NEIGHBORS = ((0, -1, 1), (1, 0, 2), (0, 1, 4), (-1, 0, 8))
 MEMORY_LIGHT = .32
 LIGHT_FADE_SECONDS = .20
@@ -59,7 +60,7 @@ class View:
         self.dagger_end_ms = self.dagger_fx['start_ms']+self.dagger_fx['duration_ms']
         self.images['dagger-slash'] = self.load(dagger_dir/self.dagger_fx['image'], pixel=True)
         self.images['mouse-maze-panel'] = self.load('sprite/ui/mouse-maze-panel.png')
-        self.images['boulder-warning-sign'] = self.load('sprite/ui/boulder-warning-sign.png')
+        self.images['boulder-warning-wall'] = self.load('sprite/quarter/props_v1/boulder-warning-wall-east.png')
         self.logical = self.target(LW, LH)
         self.display = self.target(LW*SCALE, LH*SCALE)
         self.display_ready = False
@@ -327,6 +328,23 @@ class View:
         frame = ('trap_arrival_' if arrival else 'trap_entry_')+facing
         self.atlas(x, y, 'shortcuts', frame, tint)
 
+    @staticmethod
+    def boulder_sign_mount(game):
+        if game.boulder_entry is None:
+            return None
+        x,y = game.boulder_entry
+        wall = x-1,y+1
+        if not game.solid(*wall) or game.solid(x,y+1):
+            return None
+        return x+.02,y+1.5,wall
+
+    def boulder_sign(self, x, y, tint, brightness):
+        scale = BOULDER_SIGN_SCALE*self.world_scale
+        # 동향 면 투영이 들어간 원본을 균일 축소하고 리벳을 벽 높이에 고정한다.
+        self.image('boulder-warning-wall',
+                   (x-95*scale,y-BOULDER_SIGN_HEIGHT*self.world_scale-171*scale,192*scale,240*scale),
+                   tint=tuple(round(channel*brightness) for channel in tint))
+
     def update_lighting(self, game):
         if game is not self.light_game or self.light_revision != game.layout_revision:
             self.light_game = game
@@ -421,6 +439,12 @@ class View:
         show_silhouette = False
         in_exploration_view = game.state == 'explore' and not game.reveal_all
         drawn_cells = {(x, y) for y in range(ROWS) for x in range(COLS)} if game.reveal_all else game.observed
+        sign_mount = self.boulder_sign_mount(game)
+        sign_visible = (sign_mount is not None and (game.boulder_entry in game.visible or game.reveal_all)
+                        and (game.reveal_all or game.clear_line_to(*sign_mount[:2])))
+        if sign_visible:
+            # 타일 중심이 가려져도 통로 쪽 동향 면은 보인다. 표지가 공중에 뜨지 않게 벽도 그린다.
+            drawn_cells = drawn_cells | {sign_mount[2]}
 
         def place(draw, x, y, *args):
             scene.append((x+y, draw, (*self.world(x, y), *args)))
@@ -432,6 +456,8 @@ class View:
             if not (left-32 <= sx <= left+width+32 and top-16 <= sy <= top+height+80):
                 continue
             tint, brightness = self.terrain_light(game, x, y)
+            if sign_visible and (x,y) == sign_mount[2]:
+                tint, brightness = self.terrain_light(game, *game.boulder_entry)
             variant = (x*3+y*5+game.seed) % 4
             self.terrain(sx, sy, f'floor_{variant}', tint, brightness)
             if (x, y) == gate_cell:
@@ -447,6 +473,10 @@ class View:
                 # Approximate overlap with the solid part of a foreground tile.
                 if in_exploration_view and abs(sx-player_x) < 34 and 0 < sy-player_y <= 48:
                     show_silhouette = True
+
+        if sign_visible:
+            tint,brightness = self.terrain_light(game, *game.boulder_entry)
+            place(self.boulder_sign, *sign_mount[:2], tint, brightness)
 
         for (x, y), frame in ((game.exit, 'rope_exit'),
                               (game.fountain, 'fountain_empty' if game.fountain_used else 'fountain_full')):
@@ -466,7 +496,7 @@ class View:
             color = (127,197,183) if game.puzzle_open else (218,175,107)
             for x, y in gate[1:]:
                 if (x, y) in game.visible or game.reveal_all:
-                    if game.puzzle_available() and game.close_to((x,y), .75):
+                    if self.interaction_hint(game) == ((x,y), 'F 퍼즐'):
                         continue
                     sx, sy = self.world(x+.5, y+.5)
                     markers.append(('P', sx-12*self.world_scale, sy, color))
@@ -583,9 +613,9 @@ class View:
         if game.close_to(game.trap_cell):
             return game.trap_cell, 'F 칼날방'
         if game.boulder_available():
-            return None
-        if not game.fountain_used and game.close_to(game.fountain):
-            return game.fountain, 'F 샘물 회복'
+            return game.boulder_entry, 'F 진입'
+        if game.close_to(game.fountain):
+            return None if game.fountain_used else (game.fountain, 'F 샘물 회복')
         if game.close_to(game.exit):
             return game.exit, 'F 탈출'
         if game.puzzle_available():
@@ -630,25 +660,19 @@ class View:
             cell,label = hint
             x,y = self.world(cell[0]+.5,cell[1]+.5)
             x,y = max(66,min(LW-66,x)),max(96,min(282,y-64))
-            self.hud_panel((x-56,y-11,112,22))
+            boulder = cell == game.boulder_entry
+            if boulder:
+                x,y = max(96,min(LW-96,x)),y-18
+            self.hud_panel((x-88,y-11,176,36) if boulder else (x-56,y-11,112,22))
             self.text(label,x,y,(237,208,157),size='font',center=True)
+            if boulder:
+                self.text('돌 접촉 즉사 · 5초 뒤 후방 추격',x,y+17,(224,213,188),center=True)
         if (game.time < game.banner_until and not warning and game.state == 'explore'
                 and not game.map_open and not game.banner.startswith('횃불에 접근해 F')
                 and not (puzzle_status and game.banner.startswith('퍼즐 완료'))):
             top = 68 if puzzle_status else 52
             self.hud_panel((80,top,480,26))
             self.text(game.banner,320,top+13,(225,208,164),size='font',center=True)
-        if game.boulder_available():
-            self.boulder_warning(game)
-
-    def boulder_warning(self, game):
-        x,y,w,h = BOULDER_WARNING_RECT
-        self.rectangle(x,y,w,h,(20,17,14,238))
-        self.image('boulder-warning-sign',(x+8,y+10,52,52))
-        self.text('C 돌 추격 · 돌에 닿으면 즉사',x+70,y+12,(241,186,120),size='font')
-        self.text('진입 5초 뒤 뒤에서 돌 출발',x+70,y+30,(224,213,188))
-        self.text('장애물을 피해 측면 출구로',x+70,y+46,(224,213,188))
-        self.text('F 진입',x+70,y+62,(241,207,137),size='font')
 
     def puzzle_overlay(self, game):
         self.rectangle(0,37,LW,LH-37,(0,0,0,130))

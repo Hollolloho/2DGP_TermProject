@@ -57,7 +57,20 @@ def run(app):
         game.phase_time,game.phase_warning = 55.,True
         assert '곧 밤 · 05초' in labels(app)
         view.capture(app.output/'hud/03-phase-warning.png')
+        # 사용한 샘도 F 입력을 소비하므로 겹친 퍼즐 안내와 P 배지를 숨기지 않는다.
+        app.game = overlap = Game(25,player_clips=view.player_catalog['clips'])
+        overlap.player.x,overlap.player.y = 5.5,2.25
+        overlap.player.torch,overlap.fountain_used = True,True
+        overlap.update_visibility()
+        assert overlap.puzzle_available() and overlap.close_to(overlap.fountain)
+        with patch.object(view,'badge',wraps=view.badge) as badge:
+            texts = labels(app)
+        assert 'F 퍼즐' not in texts
+        assert any(call.args[0] == 'P' for call in badge.call_args_list)
+        press(app,p.SDLK_f)
+        assert overlap.state == 'explore' and overlap.banner == '이미 사용한 샘물입니다'
         print('PASS: full-width world keeps 32/16 projection; phase/HP/ST anchors, values and colors; contextual F, no sidebar/debug list and live M map.')
+        print('PASS: used-fountain/puzzle overlap matches F input priority and preserves the P badge.')
     finally:
         app.game = original
         app.release_input()

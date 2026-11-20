@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pico2d.pico2d as p
 from SourceCode.maze_model import Game, WALK_SPEED, PHASE_SECONDS, project
-from SourceCode.game_view import BOULDER_WARNING_RECT
+from SourceCode.game_view import BOULDER_SIGN_HEIGHT
 from BoulderPractice.boulder_practice import OBSTACLES
 from .check_game_render import inject_key
 
@@ -76,25 +76,97 @@ def check_warning_visibility(app):
     calls = []
     original = view.image
     def image(name,rect,*args,**kwargs):
-        if name == 'boulder-warning-sign':calls.append(rect)
+        if name == 'boulder-warning-wall':calls.append((rect,kwargs['tint']))
         return original(name,rect,*args,**kwargs)
-    with patch.object(view,'image',side_effect=image):
+    with (patch.object(view,'image',side_effect=image),
+          patch.object(view,'hud_panel',wraps=view.hud_panel) as panel):
         picture(app)
         actual = pixels(app)
-    x,y,w,h = BOULDER_WARNING_RECT
-    assert calls == [(x+8,y+10,52,52)]
-    assert view.images['boulder-warning-sign'].w == view.images['boulder-warning-sign'].h == 192
-    with patch.object(view,'boulder_warning',lambda game:None):
+    hints = [call.args[0] for call in panel.call_args_list if call.args[0][2:] == (176,36)]
+    assert len(hints) == 1
+    _,player_y = view.world(game.player.x,game.player.y)
+    assert hints[0][1]+hints[0][3] <= player_y-54, 'C hint overlaps the player head'
+    assert len(calls) == 1
+    (x,y,w,h),tint = calls[0]
+    assert (w,h) == (24,30)
+    asset = view.images['boulder-warning-wall']
+    assert (asset.w,asset.h) == (192,240)
+    anchor = view.world(9.02,7.5)
+    assert isclose(x+95/8,anchor[0]) and isclose(y+171/8+BOULDER_SIGN_HEIGHT,anchor[1])
+    light,brightness = view.terrain_light(game,*game.boulder_entry)
+    assert tint == tuple(round(channel*brightness) for channel in light)
+    with patch.object(view,'boulder_sign',lambda *args:None):
         picture(app)
         baseline = pixels(app)
     changed = [index//4 for index in range(0,len(actual),4) if actual[index:index+4] != baseline[index:index+4]]
-    assert changed and all(x*2 <= point%1280 < (x+w)*2 and y*2 <= point//1280 < (y+h)*2 for point in changed)
-    _, player_y = view.world(game.player.x,game.player.y)
-    _, badge_y = view.world(game.boulder_entry[0]+.5,game.boulder_entry[1]+.5)
-    assert max(player_y+10*view.world_scale,badge_y+8) < y, 'warning overlaps player/C badge'
-    assert x+8+52+10 <= x+70 and y+10+52 <= y+h
+    assert len(changed) > 200
+    assert all(round(x)*2 <= point%1280 < (round(x)+24)*2 and
+               round(y)*2 <= point//1280 < (round(y)+30)*2 for point in changed)
+    # 카메라만 옮겨도 벽과 표지는 같은 화면 변위를 따른다.
+    origin = view.origin
+    view.camera = view.camera[0]+20,view.camera[1]+10
+    calls.clear()
+    with patch.object(view,'image',side_effect=image):
+        picture(app,'01b-C-camera.png')
+    shifted = calls[0][0]
+    assert (shifted[0]-x,shifted[1]-y) == (view.origin[0]-origin[0],view.origin[1]-origin[1])
+    assert shifted[:2] != (x,y)
     picture(app)
-    print('PASS: RGBA sign is 52x52 logical pixels; warning/icon/text stay below the C badge and player.')
+    print('PASS: wall sign is uniformly scaled to 24x30, rivet-mounted, lit with its wall and moves with the camera; real pixels stay inside the world sign.')
+
+
+def check_sign_boundaries(app):
+    original = app.game
+    view = app.view
+    try:
+        app.game = game = Game(117,player_clips=view.player_catalog['clips'])
+        game.player.x,game.player.y = 9.5,5.1
+        game.update_visibility()
+        picture(app)
+        game.ui_time += .4
+        with patch.object(view,'boulder_sign',wraps=view.boulder_sign) as sign:
+            texts = labels(app)
+        assert not game.boulder_available() and sign.call_count == 1
+        assert 'F 진입' not in texts and not any('즉사' in text for text in texts)
+        assert view.boulder_sign_mount(game)[2] not in game.visible
+        picture(app,'00-C-approach.png')
+        # 앞쪽 플레이어는 표지 뒤에 그리지 않는다. 벽 -> 표지 -> 플레이어 순서다.
+        game.player.y = 7.5
+        game.update_visibility()
+        order = []
+        wall,sign,player = view.shifting_wall,view.boulder_sign,view.player
+        def draw_wall(*args):
+            if args[-2] == (8,7):order.append('wall')
+            return wall(*args)
+        def draw_sign(*args):
+            order.append('sign')
+            return sign(*args)
+        def draw_player(*args):
+            order.append('player')
+            return player(*args)
+        with (patch.object(view,'shifting_wall',side_effect=draw_wall),
+              patch.object(view,'boulder_sign',side_effect=draw_sign),
+              patch.object(view,'player',side_effect=draw_player)):
+            picture(app,'01c-C-foreground-player.png')
+        assert order == ['wall','sign','player']
+        for seed,run in ((117,0),(120,0),(117,1)):
+            app.game = hidden = Game(seed,run,player_clips=view.player_catalog['clips'])
+            hidden.reveal_all = (seed,run) != (117,0)
+            with patch.object(view,'boulder_sign',wraps=view.boulder_sign) as sign:
+                picture(app)
+            assert sign.call_count == 0, 'sign leaked through unseen terrain or into another seed/run'
+        app.game = game
+        game.player.x,game.player.y = 7.5,7.5
+        game.update_visibility()
+        assert game.boulder_entry not in game.visible and not game.clear_line_to(9.02,7.5)
+        with patch.object(view,'boulder_sign',wraps=view.boulder_sign) as sign:
+            picture(app,'01d-C-wall-occlusion.png')
+        assert sign.call_count == 0
+        print('PASS: C wall face/sign visible before F range, foreground depth order, solid-wall LOS and absent signs in unseen/unsupported seed/run.')
+    finally:
+        app.game = original
+        app.release_input()
+        picture(app)
 
 
 def check_course(app):
@@ -116,8 +188,9 @@ def check_course(app):
     assert game.boulder_available() and game.player.hp == 100
     texts = labels(app)
     assert any('즉사' in text for text in texts)
-    assert any('5초' in text and '뒤에서' in text for text in texts)
-    assert any('장애물' in text and '측면 출구' in text for text in texts) and any('F 진입' in text for text in texts)
+    assert any('5초' in text and '후방 추격' in text for text in texts)
+    assert texts.count('F 진입') == 1
+    assert not any('장애물' in text or '측면 출구로' in text for text in texts)
     check_warning_visibility(app)
     picture(app,'01-C-warning.png')
     press(app,p.SDLK_m)
@@ -249,6 +322,7 @@ def run(app):
     original = app.game
     app.game = Game(117,player_clips=app.view.player_catalog['clips'])
     try:
+        check_sign_boundaries(app)
         check_course(app)
         check_boundaries(app)
     finally:
