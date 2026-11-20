@@ -192,6 +192,6 @@ class Boulder:
         distance=math.sqrt(g.x*g.x+(eye-self.centre_y)**2+(g.z-g.ball_z)**2)
         if distance<self.radius:
             opacity=round(210*max(0,1-distance/self.radius))
-            self.view.rect(0,72,self.view.w,self.view.h-172,(26,22,18,opacity))
+            self.view.rect(0,self.view.top,self.view.w,self.view.h-self.view.top-100,(26,22,18,opacity))
 
     def close(self):self.p.SDL_DestroyTexture(self.texture)

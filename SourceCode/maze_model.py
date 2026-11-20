@@ -632,10 +632,13 @@ class Game:
         self.guard_seen_until = 0.
         self.enter_room()
 
+    def boulder_available(self):
+        return (self.state == 'explore' and not self.map_open and self.boulder_entry is not None
+                and self.close_to(self.boulder_entry))
+
     def enter_boulder(self):
         """C 앞에서 모델에 진입한다. 판 시간과 공유 플레이어 자원은 유지한다."""
-        if (self.state != 'explore' or self.map_open or self.boulder_entry is None
-                or not self.close_to(self.boulder_entry)):
+        if not self.boulder_available():
             return False
         if self.boulder_room is None:
             from BoulderPractice.boulder_practice import Practice
@@ -689,6 +692,9 @@ class Game:
             self.return_from_trap(completed=True)
 
     def interact(self):
+        if self.state == 'trap' and self.trap_kind == 'boulder':
+            self.request_boulder_exit()
+            return
         if self.state != 'explore' or self.map_open:
             return
         if not self.player.torch and self.close_to(self.torch_cell):
@@ -698,6 +704,8 @@ class Game:
             self._enter_trap('blade')
             self.trap_discovered = True
             self.message(f'A 입구 → B 출구 · 일반 통로 {self.shortcut_distance}칸을 우회', 5)
+        elif self.boulder_available():
+            self.enter_boulder()
         elif self.close_to(self.fountain):
             if self.fountain_used:
                 self.message('이미 사용한 샘물입니다')

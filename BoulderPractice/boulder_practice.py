@@ -142,8 +142,9 @@ class Practice:
 
 
 class View:
-    def __init__(self,p,w,h):
+    def __init__(self,p,w,h,*,top=72):
         self.p,self.w,self.h=p,w,h
+        self.top=top
         self.focal=w*.62
         self.images={}
         for name,path in [('raw_wall',ROOT/'sprite/wall/materials/base_a.png'),
@@ -175,7 +176,7 @@ class View:
         assert self.canvas,p.SDL_GetError()
         p.SDL_SetTextureScaleMode(self.canvas,p.SDL_ScaleModeLinear)
         from SourceCode.trap_view import CorridorPlanes
-        self.planes=CorridorPlanes(self,width=w,height=h,top=72,focal=self.focal,
+        self.planes=CorridorPlanes(self,width=w,height=h,top=top,focal=self.focal,
                                    length=LENGTH+30,half_width=HALF_WIDTH,camera=self.camera)
         self.vertex=struct.Struct('<ffBBBBff')
         from .boulder_volume import Boulder
@@ -287,10 +288,9 @@ class View:
         for points in faces:
             self.quad(g,'raw_wall',points,[(0,0),(1,0),(1,1),(0,1)],tint)
 
-    def draw(self,g):
-        draw_started=time.perf_counter()
+    def draw_scene(self,g):
+        """현재 렌더 타깃에 장면만 그린다. HUD·화면 전환은 호출자가 담당한다."""
         p=self.p;w,h=self.w,self.h
-        p.SDL_SetRenderTarget(p.renderer,self.canvas)
         p.SDL_SetRenderDrawColor(p.renderer,8,11,11,255);p.SDL_RenderClear(p.renderer)
         self.planes.draw_planes(g)
         # A real end wall keeps the last side exit from looking like an infinite corridor.
@@ -314,7 +314,13 @@ class View:
                 self.rock.body(g)
                 self.rock.dust(g,front=True)
         if g.ball_z<LENGTH+1.3:self.rock.inside_overlay(g)
-        if g.hit_until>g.time:self.rect(0,72,w,h-72,(160,28,19,round(70*(g.hit_until-g.time)/.45)))
+        if g.hit_until>g.time:self.rect(0,self.top,w,h-self.top,(160,28,19,round(70*(g.hit_until-g.time)/.45)))
+
+    def draw(self,g):
+        draw_started=time.perf_counter()
+        p=self.p;w,h=self.w,self.h
+        p.SDL_SetRenderTarget(p.renderer,self.canvas)
+        self.draw_scene(g)
         self.rect(0,0,w,72,(12,17,18,245));self.rect(0,h-100,w,100,(12,17,18,235))
         self.text('돌 추격 · 무적 연습' if self.room_ready else '돌 추격 · 임시 사물',24,10,big=False)
         if g.state=='ready':status=f'{max(0,5-g.time):.1f}초 후 돌 출발 · 먼저 이동하세요'

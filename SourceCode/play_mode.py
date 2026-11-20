@@ -24,15 +24,19 @@ class PlayMode:
         self.running = True
         self.audio = Audio(project)
 
+    def release_input(self):
+        self.held.clear()
+        self.game.puzzle.release()
+        self.puzzle_mouse_held = False
+        self.game.boulder_return_requested = self.game.boulder_exit_requested = False
+
     def handle_events(self):
         event = p.SDL_Event()
         while p.SDL_PollEvent(ctypes.byref(event)):
             if event.type == p.SDL_QUIT:
                 self.running = False
             elif event.type == p.SDL_WINDOWEVENT and event.window.event == p.SDL_WINDOWEVENT_FOCUS_LOST:
-                self.held.clear()
-                self.game.puzzle.release()
-                self.puzzle_mouse_held = False
+                self.release_input()
             elif event.type == p.SDL_KEYUP:
                 self.held.discard(event.key.keysym.sym)
             elif event.type == p.SDL_KEYDOWN:
@@ -49,7 +53,10 @@ class PlayMode:
                     elif self.game.state == 'puzzle':
                         self.game.close_puzzle()
                     elif self.game.state == 'trap':
-                        self.game.return_from_trap()
+                        if self.game.trap_kind == 'boulder':
+                            self.game.request_boulder_return()
+                        else:
+                            self.game.return_from_trap()
                     else:
                         self.running = False
                 elif key == p.SDLK_f:
@@ -64,7 +71,7 @@ class PlayMode:
                     self.game.reveal_all = not self.game.reveal_all
                 elif key == p.SDLK_r:
                     self.game = Game(self.seed, self.game.run_number+1, self.view.player_catalog['clips'])
-                    self.held.clear()
+                    self.release_input()
                 elif key == p.SDLK_F10:
                     self.view.capture(self.output/'manual.png')
                     self.game.message('output/topdown/manual.png 저장')
@@ -86,9 +93,7 @@ class PlayMode:
                     self.game.drag_puzzle(self.mouse_point(event.motion))
 
         if not self.smoke and not p.SDL_GetWindowFlags(p.window) & p.SDL_WINDOW_INPUT_FOCUS:
-            self.held.clear()
-            self.game.puzzle.release()
-            self.puzzle_mouse_held = False
+            self.release_input()
 
     @staticmethod
     def mouse_point(event):
@@ -103,7 +108,8 @@ class PlayMode:
         if previous == 'explore':
             # 일반 미로에서는 W가 격자 -X 통로, D가 격자 -Y 통로 방향이다.
             dx, dy = dy, -dx
-        self.game.update(dt,dx,dy,bool(self.held & {p.SDLK_LSHIFT,p.SDLK_RSHIFT}))
+        self.game.update(dt,dx,dy,bool(self.held & {p.SDLK_LSHIFT,p.SDLK_RSHIFT}),
+                         look_back=p.SDLK_q in self.held)
         if previous!=self.game.state:
             self.held.clear()
         if not self.smoke:
