@@ -93,7 +93,7 @@ class Practice:
         self.automatic_exit()
 
     def advance(self,dt,dx=0,forward=0,sprint_fraction=0,look_back=False):
-        """移動と 돌 진행만 갱신한다. 자원·즉사·출구 확정은 호출자가 처리한다."""
+        """이동과 돌 진행만 갱신한다. 자원·즉사·출구 확정은 호출자가 처리한다."""
         dt=max(0,min(.05,dt))
         self.look_back=look_back
         if self.state=='clear' or not dt:return
@@ -131,6 +131,7 @@ class Practice:
             # Invulnerability changes the damage result, never the trajectory.
             # Count only entry into overlap, including a later genuine recontact.
             self.ball_touching=touching
+
     def automatic_exit(self):
         if self.state=='clear':return False
         for name,side,z,half in EXITS:
