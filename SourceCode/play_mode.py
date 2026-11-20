@@ -3,7 +3,7 @@ import ctypes
 import json
 import pico2d.pico2d as p
 from .maze_model import Game
-from .game_view import View, LW, LH
+from .game_view import View, LW, LH, PUZZLE_OFFSET_X
 from .game_audio import Audio
 
 
@@ -95,11 +95,11 @@ class PlayMode:
         if not self.smoke and not p.SDL_GetWindowFlags(p.window) & p.SDL_WINDOW_INPUT_FOCUS:
             self.release_input()
 
-    @staticmethod
-    def mouse_point(event):
+    def mouse_point(self, event):
         width, height = ctypes.c_int(), ctypes.c_int()
         p.SDL_GetWindowSize(p.window, ctypes.byref(width), ctypes.byref(height))
-        return event.x*LW//max(1, width.value), event.y*LH//max(1, height.value)
+        offset = PUZZLE_OFFSET_X if self.game.state == 'puzzle' else 0
+        return event.x*LW//max(1, width.value)-offset, event.y*LH//max(1, height.value)
 
     def update(self, dt):
         dx = int(p.SDLK_d in self.held)-int(p.SDLK_a in self.held)

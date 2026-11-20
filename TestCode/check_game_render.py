@@ -10,6 +10,7 @@ from SourceCode.maze_model import PHASE_SECONDS, PHASE_WARNING_SECONDS, SHIFT_SW
 from SourceCode.maze_model import WALK_SPEED, RUN_SPEED, PLAYER_HALF_SIZE
 from SourceCode.maze_model import GUARD_DAMAGE
 from SourceCode.game_view import LW, LH, SCALE, project
+from SourceCode.game_view import PUZZLE_OFFSET_X, PHASE_HUD_RECT, VITALS_HUD_RECT
 from SourceCode.trap_view import project as project_trap
 from SourceCode.mouse_maze import BOARD, MAZE, START_CELL, GOAL_CELL, cell_center
 
@@ -41,6 +42,8 @@ def inject_mouse(event_type, point, held=True):
 def run(app):
     from .check_boulder_render import run as check_boulder_render
     check_boulder_render(app)
+    from .check_game_hud import run as check_game_hud
+    check_game_hud(app)
     output = app.output
     from math import ceil, hypot, isclose
 
@@ -87,7 +90,7 @@ def run(app):
         app.game = room
         wall, near, far = room.puzzle_gate
         assert room.phase == 2 and (near, far) == ((17, 5), (17, 7))
-        hint = 'F  마우스 미로'
+        hint = 'F 퍼즐'
         interact = p.SDLK_f
 
         def HUD_text():
@@ -102,9 +105,7 @@ def run(app):
                 assert wall in room.visible and approach in room.visible
                 with patch.object(view, 'badge', wraps=view.badge) as badge:
                     assert hint in HUD_text()
-                sx, sy = view.world(approach[0]+.5, approach[1]+.5)
-                assert [call.args[1:3] for call in badge.call_args_list if call.args[0] == 'P'] == [
-                    (sx-12*view.world_scale, sy)]
+                assert not [call for call in badge.call_args_list if call.args[0] == 'P'], 'active P must have one F prompt'
 
                 press(interact)
                 assert room.state == 'puzzle' and hint not in HUD_text()
@@ -142,10 +143,11 @@ def run(app):
         down, motion, up = p.SDL_MOUSEBUTTONDOWN, p.SDL_MOUSEMOTION, p.SDL_MOUSEBUTTONUP
 
         def mouse(kind, point, held=True):
-            inject_mouse(kind, point, held)
+            inject_mouse(kind, (point[0]+PUZZLE_OFFSET_X,point[1]), held)
             app.handle_events()
 
         def puzzle_pixels(rect):
+            rect = p.SDL_Rect(rect.x+PUZZLE_OFFSET_X*SCALE,rect.y,rect.w,rect.h)
             pixels = (ctypes.c_uint32*(rect.w*rect.h))()
             app.view.draw(room)
             app.view.select_readback_target()
@@ -876,12 +878,16 @@ def run(app):
 
         def hud_pixels():
             # 같은 변형 구간의 HUD 픽셀이 진동으로 이동하지 않는지 검사한다.
-            rect = p.SDL_Rect(512*SCALE, 30*SCALE, 128*SCALE, 340*SCALE)
-            pixels = (ctypes.c_ubyte*(rect.w*rect.h*4))()
+            samples = []
             app.view.select_readback_target()
             try:
-                assert p.SDL_RenderReadPixels(p.renderer, rect, p.SDL_PIXELFORMAT_RGBA32, pixels, rect.w*4) == 0
-                return bytes(pixels)
+                for region in (PHASE_HUD_RECT,VITALS_HUD_RECT):
+                    x,y,w,h = region
+                    rect = p.SDL_Rect((x+4)*SCALE,(y+4)*SCALE,(w-8)*SCALE,(h-8)*SCALE)
+                    pixels = (ctypes.c_ubyte*(rect.w*rect.h*4))()
+                    assert p.SDL_RenderReadPixels(p.renderer,rect,p.SDL_PIXELFORMAT_RGBA32,pixels,rect.w*4) == 0
+                    samples.append(bytes(pixels))
+                return b''.join(samples)
             finally:
                 p.SDL_SetRenderTarget(p.renderer, None)
 
