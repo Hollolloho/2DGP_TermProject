@@ -72,6 +72,10 @@ def check_dagger(player):
 
 
 def run(require_complete=False):
+    warning = ROOT/'sprite/ui/boulder-warning-sign.png'
+    assert png_size(warning) == (192, 192)
+    with warning.open('rb') as stream:
+        assert stream.read(26)[24:26] == bytes((8, 6)), 'warning sign must be 8-bit RGBA PNG'
     for relative in ('sprite/wall/materials/base_a.png',
                      'sprite/surfaces/materials/floor_flagstone.png',
                      'sprite/surfaces/materials/ceiling_damp.png',

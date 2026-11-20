@@ -54,6 +54,7 @@ class View:
         self.dagger_end_ms = self.dagger_fx['start_ms']+self.dagger_fx['duration_ms']
         self.images['dagger-slash'] = self.load(dagger_dir/self.dagger_fx['image'], pixel=True)
         self.images['mouse-maze-panel'] = self.load('sprite/ui/mouse-maze-panel.png')
+        self.images['boulder-warning-sign'] = self.load('sprite/ui/boulder-warning-sign.png')
         self.logical = self.target(LW, LH)
         self.display = self.target(LW*SCALE, LH*SCALE)
         self.display_ready = False
@@ -601,14 +602,12 @@ class View:
             self.boulder_warning(game)
 
     def boulder_warning(self, game):
-        self.rectangle(16,240,448,124,(20,17,14,238))
-        self.text('돌 추격 통로 · 돌에 닿으면 즉사',28,255,(241,186,120),size='font')
-        for y, line in ((277,'진입 5초 뒤 뒤쪽에서 돌 출발'),
-                        (295,'A/D로 장애물 우회 · 측면 출구로 탈출'),
-                        (313,'W/S 이동 · Shift 달리기 · Q 뒤 확인'),
-                        (331,'F 진입 · Esc로 입장 전 위치 복귀'),
-                        (349,'시간대가 바뀌면 입장 전 위치로 복귀')):
-            self.text(line,28,y,(224,213,188))
+        self.rectangle(16,292,340,72,(20,17,14,238))
+        self.image('boulder-warning-sign',(24,302,52,52))
+        self.text('C 돌 추격 · 돌에 닿으면 즉사',86,304,(241,186,120),size='font')
+        self.text('진입 5초 뒤 뒤에서 돌 출발',86,322,(224,213,188))
+        self.text('장애물을 피해 측면 출구로',86,338,(224,213,188))
+        self.text('F 진입',86,354,(241,207,137),size='font')
 
     def puzzle_overlay(self, game):
         parchment = (234, 219, 183)

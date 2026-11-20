@@ -70,6 +70,31 @@ def map_badges(app):
     return values
 
 
+def check_warning_visibility(app):
+    game, view = app.game, app.view
+    calls = []
+    original = view.image
+    def image(name,rect,*args,**kwargs):
+        if name == 'boulder-warning-sign':calls.append(rect)
+        return original(name,rect,*args,**kwargs)
+    with patch.object(view,'image',side_effect=image):
+        picture(app)
+        actual = pixels(app)
+    assert calls == [(24,302,52,52)]
+    assert view.images['boulder-warning-sign'].w == view.images['boulder-warning-sign'].h == 192
+    with patch.object(view,'boulder_warning',lambda game:None):
+        picture(app)
+        baseline = pixels(app)
+    changed = [index//4 for index in range(0,len(actual),4) if actual[index:index+4] != baseline[index:index+4]]
+    assert changed and all(32 <= point%1280 < 712 and 584 <= point//1280 < 728 for point in changed)
+    _, player_y = view.world(game.player.x,game.player.y)
+    _, badge_y = view.world(game.boulder_entry[0]+.5,game.boulder_entry[1]+.5)
+    assert max(player_y+10*view.world_scale,badge_y+8) < 292, 'warning overlaps player/C badge'
+    assert 24+52+10 <= 86 and 302+52 <= 292+72
+    picture(app)
+    print('PASS: RGBA sign is 52x52 logical pixels; warning/icon/text stay below the C badge and player.')
+
+
 def check_course(app):
     game = app.game
     if (game.seed,game.run_number,game.time) != (117,0,0.):
@@ -89,8 +114,9 @@ def check_course(app):
     assert game.boulder_available() and game.player.hp == 100
     texts = labels(app)
     assert any('즉사' in text for text in texts)
-    assert any('5초' in text and '뒤쪽' in text for text in texts)
-    assert any('장애물 우회' in text for text in texts) and any('F 진입' in text for text in texts)
+    assert any('5초' in text and '뒤에서' in text for text in texts)
+    assert any('장애물' in text and '측면 출구' in text for text in texts) and any('F 진입' in text for text in texts)
+    check_warning_visibility(app)
     picture(app,'01-C-warning.png')
     press(app,p.SDLK_m)
     assert game.map_open and not game.boulder_available()
