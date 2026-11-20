@@ -20,16 +20,36 @@ def run(app):
             texts = labels(app)
         assert MAP_RECT == (0,0,640,400) and view.world_scale == 1
         assert PHASE_HUD_RECT in [call.args[0] for call in panel.call_args_list]
-        assert VITALS_HUD_RECT in [call.args[0] for call in panel.call_args_list]
+        assert not any(call.args[0][0] < 153 and call.args[0][1] >= 318 for call in panel.call_args_list)
         assert '낮 · 60초' in texts and ' 73' in texts and ' 42' in texts
         assert texts.count('F 횃불 획득') == 1
         assert not any(any(old in text for old in ('FPS','WASD','두 키 조합','F  상호작용','미궁 탐색')) for text in texts)
-        frame = pixels(app)
-        def rgb(x,y):
-            index = ((y*2)*1280+x*2)*4
-            return tuple(frame[index:index+3])
-        assert rgb(74,332) == (155,76,59) and rgb(150,332) == (41,39,34)
-        assert rgb(74,353) == (119,139,89) and rgb(120,353) == (41,39,34)
+        for name,hp,stamina in (('full',100,100.),('partial',73,42.),('empty',0,0.)):
+            game.player.hp,game.player.stamina = hp,stamina
+            texts = labels(app)
+            assert f'{hp:3d}' in texts and f'{int(stamina):3d}' in texts
+            frame = pixels(app)
+            def rgb(x,y):
+                index = ((y*2)*1280+x*2)*4
+                return tuple(frame[index:index+3])
+            for y,height,value,color in ((356,6,hp,(155,76,59)),(370,4,stamina,(110,130,91))):
+                for row in range(y-height//2,y+height//2):
+                    for x in range(40,124):
+                        expected = color if x < 40+round(84*value/100) else (35,32,29)
+                        assert rgb(x,row) == expected,(name,x,row)
+                assert rgb(39,y) == (8,11,12) and rgb(124,y) == (8,11,12)
+            view.capture(app.output/f'hud/vitals-{name}.png')
+            with patch.object(view,'hud_vitals',lambda game:None):
+                view.draw(game)
+                baseline = pixels(app)
+            changed = [index//4 for index in range(0,len(frame),4)
+                       if frame[index:index+4] != baseline[index:index+4]]
+            x,y,w,h = VITALS_HUD_RECT
+            assert changed and len(changed) < 8000
+            assert all(x*2 <= point%1280 < (x+w)*2 and y*2 <= point//1280 < (y+h)*2
+                       for point in changed), 'vitals cover the former panel or spill outside their bounds'
+        game.player.hp,game.player.stamina = 73,42.
+        view.draw(game)
         a,b = view.world(0,0),view.world(1,0)
         assert (b[0]-a[0],b[1]-a[1]) == (32,16)
         view.capture(app.output/'hud/01-explore.png')
@@ -69,7 +89,8 @@ def run(app):
         assert any(call.args[0] == 'P' for call in badge.call_args_list)
         press(app,p.SDLK_f)
         assert overlap.state == 'explore' and overlap.banner == '이미 사용한 샘물입니다'
-        print('PASS: full-width world keeps 32/16 projection; phase/HP/ST anchors, values and colors; contextual F, no sidebar/debug list and live M map.')
+        print('PASS: frameless 84px HP/ST tracks at 6/4px, full/partial/zero values and fixed bounds; unoccupied scenery stays visible.')
+        print('PASS: full-width 32/16 projection, phase HUD, contextual F, no sidebar/debug list and live M map.')
         print('PASS: used-fountain/puzzle overlap matches F input priority and preserves the P badge.')
     finally:
         app.game = original
