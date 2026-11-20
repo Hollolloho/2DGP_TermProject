@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pico2d.pico2d as p
 from SourceCode.maze_model import Game, WALK_SPEED, PHASE_SECONDS, project
+from SourceCode.game_view import BOULDER_WARNING_RECT
 from BoulderPractice.boulder_practice import OBSTACLES
 from .check_game_render import inject_key
 
@@ -80,17 +81,18 @@ def check_warning_visibility(app):
     with patch.object(view,'image',side_effect=image):
         picture(app)
         actual = pixels(app)
-    assert calls == [(24,302,52,52)]
+    x,y,w,h = BOULDER_WARNING_RECT
+    assert calls == [(x+8,y+10,52,52)]
     assert view.images['boulder-warning-sign'].w == view.images['boulder-warning-sign'].h == 192
     with patch.object(view,'boulder_warning',lambda game:None):
         picture(app)
         baseline = pixels(app)
     changed = [index//4 for index in range(0,len(actual),4) if actual[index:index+4] != baseline[index:index+4]]
-    assert changed and all(32 <= point%1280 < 712 and 584 <= point//1280 < 728 for point in changed)
+    assert changed and all(x*2 <= point%1280 < (x+w)*2 and y*2 <= point//1280 < (y+h)*2 for point in changed)
     _, player_y = view.world(game.player.x,game.player.y)
     _, badge_y = view.world(game.boulder_entry[0]+.5,game.boulder_entry[1]+.5)
-    assert max(player_y+10*view.world_scale,badge_y+8) < 292, 'warning overlaps player/C badge'
-    assert 24+52+10 <= 86 and 302+52 <= 292+72
+    assert max(player_y+10*view.world_scale,badge_y+8) < y, 'warning overlaps player/C badge'
+    assert x+8+52+10 <= x+70 and y+10+52 <= y+h
     picture(app)
     print('PASS: RGBA sign is 52x52 logical pixels; warning/icon/text stay below the C badge and player.')
 
