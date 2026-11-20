@@ -637,8 +637,6 @@ class View:
             fill = round(84*max(0.,min(1.,value/100)))
             if fill:
                 self.rectangle(40,y-height/2,fill,height,color)
-        label('횃불 · 켜짐' if game.player.torch else '횃불 · 없음',16,384,
-              (223,178,101) if game.player.torch else (160,160,145))
 
     def hud(self, game, fps=0):
         remaining = max(0., PHASE_SECONDS-game.phase_time)
