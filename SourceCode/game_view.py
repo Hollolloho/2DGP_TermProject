@@ -10,7 +10,7 @@ from .maze_model import BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS, COLS, ROWS, PHASE
 from .maze_model import PHASE_SECONDS, SHIFT_SECONDS, SHIFT_SWAP_AT
 from .maze_model import ATTACK_FORWARD, DEFAULT_ATTACK_HIT_MS, HALF_TILE_W, HALF_TILE_H, project
 from .trap_view import Corridor, VERTEX
-from .mouse_maze import MAZE, cell_center, cell_rect
+from .mouse_maze import BOARD, MAZE, WAYPOINTS, GOAL_CELL, cell_center, cell_rect
 from .path_connection import DIRECTIONS as CONNECTION_DIRECTIONS
 from .puzzle_layout import ROOM_ORIGIN, ROOM_SCALE, room_point, connection_cell, on_loose_floor
 from .world_path_room import FIXED_FLOOR, LOOSE_POSITIONS, ENTER_SECONDS
@@ -733,16 +733,21 @@ class View:
         self.text('Esc 닫기',394,68,muted,size='font')
         if game.guard_attack_at is not None:
             self.text('수호자 공격 예고',270,68,(239,164,109),size='font')
-        self.text('좌클릭을 누른 채 도착까지 선 잇기', 66, 94, parchment, size='font')
-        self.text('버튼을 놓으면 커서에서 다시 시작', 66, 113, muted)
+        self.text('좌클릭 드래그 · 1 → 2 → 3 → 도착' if WAYPOINTS else '좌클릭을 누른 채 도착까지 선 잇기',
+                  66,94,parchment,size='font')
+        if WAYPOINTS:
+            for index in range(len(WAYPOINTS)):
+                state = '완료' if index < game.puzzle.progress else '다음' if index == game.puzzle.progress else '대기'
+                color = moss if state == '완료' else ember if state == '다음' else muted
+                self.text(f'{index+1} {state}',66+92*index,113,color,size='font')
+        else:
+            self.text('버튼을 놓으면 커서에서 다시 시작',66,113,muted)
 
-        self.rectangle(64, 132, 310, 174, mortar)
+        bx,by,size = BOARD
+        self.rectangle(bx-2,by-2,len(MAZE[0])*size+4,len(MAZE)*size+4,mortar)
         tile_tints = {'#': wall_tint, 'G': (148, 119, 83)}
         puzzle = game.puzzle
-        linked_cells = set(puzzle.path)
-        if len(puzzle.path) > 1 and puzzle.preview_cell == puzzle.path[-2]:
-            # 되짚는 끝 칸은 커서가 물러나는 만큼 기본색으로 돌아간다.
-            linked_cells.remove(puzzle.cell)
+        linked_cells = set(puzzle.retained_path)
         active_cells = (puzzle.cell, puzzle.preview_cell)
         cursor_x, cursor_y = puzzle.cursor
         for y, row in enumerate(MAZE):
@@ -776,13 +781,35 @@ class View:
                     label, accent = ('출발', parchment) if tile == 'S' else ('도착', ember)
                     self.rectangle(cx-4, cy-4, 9, 9, mortar)
                     self.rectangle(cx-3, cy-3, 7, 7, accent)
-                    self.text(label, left+7, top+27, accent)
+                    if WAYPOINTS:
+                        self.text(label,cx,top+height-5,accent,center=True)
+                    else:
+                        self.text(label,left+7,top+27,accent)
 
         self.puzzle_route(game)
+        for index,cell in enumerate(WAYPOINTS):
+            cx,cy = cell_center(*cell)
+            color = moss if index < puzzle.progress else ember if index == puzzle.progress else muted
+            if puzzle.sequence_error and index > puzzle.progress and cell in puzzle.retained_path:
+                color = (231,134,109)
+            self.rectangle(cx-7,cy-8,14,16,(20,23,22))
+            self.rectangle(cx-7,cy-8,14,1,color)
+            self.rectangle(cx-7,cy+7,14,1,color)
+            self.text(str(index+1),cx,cy,color,size='hud_font',center=True)
+        footer = 344 if WAYPOINTS else 331
         if game.puzzle.hit_wall:
-            self.text('연결이 막혔습니다 · 통로로 돌아와 이어 그리기', 66, 331, ember, size='font')
+            self.text('연결이 막혔습니다 · 통로로 돌아와 이어 그리기',66,footer,ember,size='font')
+        elif WAYPOINTS:
+            if puzzle.sequence_error:
+                message = f'다음 {puzzle.progress+1}번부터 · 되짚어 순서를 복구하세요'
+            elif puzzle.cell == GOAL_CELL and puzzle.progress < len(WAYPOINTS):
+                message = '도착 전 1 → 2 → 3 필요 · 되짚어 다시 잇기'
+            else:
+                target = f'다음 {puzzle.progress+1}번' if puzzle.progress < len(WAYPOINTS) else '도착으로'
+                message = f'{target} · 완료 시 다음 {PHASES[game.next_phase]}에 문 개방'
+            self.text(message,66,footer,ember if puzzle.sequence_error or puzzle.cell == GOAL_CELL else parchment,size='font')
         else:
-            self.text('완료하면 다음 시간대에 문이 열립니다.', 66, 331, parchment, size='font')
+            self.text('완료하면 다음 시간대에 문이 열립니다.',66,footer,parchment,size='font')
 
         wall, near, far = game.puzzle_gate
         wx, wy = wall
@@ -897,10 +924,7 @@ class View:
         puzzle = game.puzzle
         gold = (241, 198, 123)
         edge = (107, 70, 39)
-        nodes = [cell_center(*cell) for cell in puzzle.path]
-        # Returning along the previous edge retracts its visible end before the node pops.
-        if len(nodes) > 1 and puzzle.preview_cell == puzzle.path[-2]:
-            nodes.pop()
+        nodes = [cell_center(*cell) for cell in puzzle.retained_path]
         for (x, y), (nx, ny) in zip(nodes, [*nodes[1:], puzzle.cursor]):
             if (x, y) == (nx, ny):
                 continue

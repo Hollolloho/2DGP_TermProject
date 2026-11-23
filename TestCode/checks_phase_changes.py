@@ -3,6 +3,7 @@ import math
 from SourceCode.maze_model import (Game, COLS, ROWS, DIRECTIONS, PHASE_SECONDS,
                                    PHASE_WARNING_SECONDS, SHIFT_SWAP_AT, GUARD_DAMAGE, distances)
 from SourceCode.mouse_maze import BOARD, MAZE, START_CELL, GOAL_CELL, MouseMaze, cell_at, cell_center
+from .mouse_maze_fixture import legacy_mouse_maze
 
 
 def finish_shift(game):
@@ -145,6 +146,7 @@ def check_phase_changes():
     print('PASS: 96 starts, 288 layouts, 480 transitions; routes, one swap, frozen world, safe relocation, exact trap return, phase maps and resources.')
 
 
+@legacy_mouse_maze
 def check_first_puzzle():
     left, top, size = BOARD
     center = cell_center
@@ -333,6 +335,7 @@ def check_first_puzzle():
     check_puzzle_both_sides()
 
 
+@legacy_mouse_maze
 def check_puzzle_both_sides():
     def stand(game, point):
         assert game.can_stand(*point)
@@ -425,6 +428,7 @@ def guardian_interrupts_puzzle():
     return game
 
 
+@legacy_mouse_maze
 def check_guardian_puzzle():
     interrupted = guardian_interrupts_puzzle()
     start_shift(interrupted)

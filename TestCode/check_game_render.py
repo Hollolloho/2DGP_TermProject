@@ -13,6 +13,7 @@ from SourceCode.game_view import LW, LH, SCALE, project
 from SourceCode.game_view import PUZZLE_OFFSET_X, PHASE_HUD_RECT
 from SourceCode.trap_view import project as project_trap
 from SourceCode.mouse_maze import BOARD, MAZE, START_CELL, GOAL_CELL, cell_center
+from .mouse_maze_fixture import legacy_mouse_maze
 
 
 def inject_key(key, down=True):
@@ -46,6 +47,8 @@ def run(app):
     check_game_hud(app)
     from .check_connection_render import run as check_connection_render
     check_connection_render(app)
+    from .check_waypoint_render import run as check_waypoint_render
+    check_waypoint_render(app)
     output = app.output
     from math import ceil, hypot, isclose
 
@@ -132,6 +135,7 @@ def run(app):
             app.game = g
             app.held.clear()
 
+    @legacy_mouse_maze
     def check_puzzle_input():
         room = Game(117, player_clips=app.view.player_catalog['clips'])
         app.game = room
