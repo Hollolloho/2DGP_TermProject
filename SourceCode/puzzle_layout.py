@@ -29,7 +29,7 @@ def connection_center(cell):
 
 def on_loose_floor(point):
     x,y = room_point(point)
-    return -3 <= x < -1 and 0 <= y < 4
+    return -3 <= x < -1 and -1 <= y < 5
 
 
 def connection_piece_at(puzzle, point):

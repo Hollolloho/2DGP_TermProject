@@ -1,11 +1,13 @@
 """월드 통로 방: 보통 진입, 역투영 드래그, R, 실제 WASD 통과의 SDL 회귀."""
-from math import ceil,hypot
+from math import ceil
+import ctypes
 from unittest.mock import patch
 import pico2d.pico2d as p
-from SourceCode.maze_model import Game, PHASE_SECONDS, WALK_SPEED, project
+from SourceCode.maze_model import Game, PHASE_SECONDS
 from SourceCode.puzzle_layout import room_screen, connection_center
 from SourceCode.world_path_room import LOOSE_POSITIONS
-from SourceCode.path_connection import N,E,S,W
+from SourceCode.path_connection import E,W,RUNES
+from .runed_path_fixtures import ROUTES,placement
 from .check_game_render import inject_mouse
 from .check_boulder_render import keys,press,picture,pixels,labels
 
@@ -15,19 +17,28 @@ def run(app):
     def mouse(kind,point,held=True):
         inject_mouse(kind,point,held)
         app.handle_events()
+    def advance(seconds):
+        count = max(1,ceil(seconds/.05))
+        for _ in range(count):
+            app.update(seconds/count)
+            picture(app)
     def rotate_to(index,ports):
         game = app.game
         for _ in range(4):
             if game.connection.pieces[index].ports == frozenset(ports):return
             press(app,p.SDLK_r)
             assert app.game is game
+            advance(.15)
         raise AssertionError('R did not rotate the held slab')
     def put(index,cell,ports):
         mouse(p.SDL_MOUSEBUTTONDOWN,room_screen(*LOOSE_POSITIONS[index]))
         assert app.game.connection.held == index
         rotate_to(index,ports)
         mouse(p.SDL_MOUSEMOTION,connection_center(cell))
+        advance(.45)
+        assert not app.game.connection.completed
         mouse(p.SDL_MOUSEBUTTONUP,connection_center(cell))
+        advance(.15)
         assert app.game.connection.pieces[index].cell == cell
     def tick(count,dt=.02):
         for _ in range(count):
@@ -86,21 +97,53 @@ def run(app):
             pixels(app)
             app.view.capture(app.output/capture)
         keys(app)
+    def native_start():
+        app.game = game = Game(117,player_clips=app.view.player_catalog['clips'])
+        app.release_input()
+        picture(app);tick(20)
+        press(app,p.SDLK_f)
+        assert game.player.torch and game.state == 'explore'
+        keys(app,(p.SDLK_w,));tick(20);keys(app)
+        assert abs(game.player.x-9.5) < 1e-6 and abs(game.player.y-1.5) < 1e-6
+        assert 'F 길의 방' in labels(app)
+        return game
+    def rune_pixels():
+        picture(app)
+        frame = pixels(app)
+        for index,cell in enumerate(RUNES):
+            reached = cell in app.game.connection.reached_runes
+            color = ((250,209,116),(144,218,240))[index] if reached else ((197,155,89),(110,165,190))[index]
+            sx,sy = app.view.world(cell[0]+.5,cell[1]+.5)
+            count = sum(tuple(frame[(y*1280+x)*4:(y*1280+x)*4+3]) == color
+                        for y in range(round((sy-18)*2),round((sy-4)*2))
+                        for x in range(round((sx-8)*2),round((sx+8)*2)))
+            assert count > 15,(index,reached,'rune hidden by slab art')
+    def capture_window(width,height,name):
+        picture(app)
+        data = (ctypes.c_ubyte*(width*height*4))()
+        assert p.SDL_RenderReadPixels(p.renderer,None,p.SDL_PIXELFORMAT_RGBA32,data,width*4) == 0
+        surface = p.SDL_CreateRGBSurfaceWithFormatFrom(data,width,height,32,width*4,p.SDL_PIXELFORMAT_RGBA32)
+        assert surface
+        try:
+            path = app.output/name
+            assert p.IMG_SavePNG(surface,str(path).encode('utf-8')) == 0
+        finally:
+            p.SDL_FreeSurface(surface)
     try:
         for width,height in ((1280,800),(960,600)):
             p.SDL_SetWindowSize(p.window,width,height)
-            app.game = game = Game(117,player_clips=app.view.player_catalog['clips'])
-            app.release_input()
-            picture(app);tick(20)
-            press(app,p.SDLK_f)
-            assert game.player.torch and game.state == 'explore'
-            keys(app,(p.SDLK_w,))
-            tick(20)
-            keys(app)
-            assert abs(game.player.x-9.5) < 1e-6 and abs(game.player.y-1.5) < 1e-6
-            assert 'F 길의 방' in labels(app)
+            game = native_start()
             enter(width == 1280)
-            # 방에서 먼저 해결하지 않으면 앞의 빈 바닥을 건널 수 없다.
+            # 9개 모두 원래 바닥 자리로 드롭하고 네 번 회전해 원상복구한다.
+            for index,center in enumerate(LOOSE_POSITIONS):
+                rotation = game.connection.pieces[index].rotation
+                mouse(p.SDL_MOUSEBUTTONDOWN,room_screen(*center))
+                assert game.connection.held == index
+                for _ in range(4):press(app,p.SDLK_r)
+                mouse(p.SDL_MOUSEMOTION,room_screen(*center))
+                mouse(p.SDL_MOUSEBUTTONUP,room_screen(*center))
+                assert game.connection.pieces[index].cell is None
+                assert game.connection.pieces[index].rotation == rotation
             keys(app,(p.SDLK_s,));tick(60);keys(app)
             assert game.state == 'path_room' and game.player.x < -.2
             put(0,(0,1),(W,E));put(1,(1,1),(W,E))
@@ -112,8 +155,7 @@ def run(app):
                 mouse(p.SDL_MOUSEBUTTONUP,target)
                 assert game.connection.pieces[0].cell == (0,1) and game.connection.pieces[0].rotation == saved
             mouse(p.SDL_MOUSEBUTTONDOWN,connection_center((0,1)))
-            press(app,p.SDLK_r)
-            press(app,p.SDLK_ESCAPE)
+            press(app,p.SDLK_r);press(app,p.SDLK_ESCAPE)
             assert game.state == 'explore' and (game.player.x,game.player.y) == game.path_return
             assert game.connection.pieces[0].cell == (0,1) and game.connection.pieces[0].rotation == saved
             mouse(p.SDL_MOUSEBUTTONDOWN,(610,90))
@@ -127,53 +169,97 @@ def run(app):
             app.handle_events()
             assert not game.connection.dragging and not app.held
             mouse(p.SDL_MOUSEBUTTONUP,(610,90))
-            mouse(p.SDL_MOUSEBUTTONDOWN,room_screen(*LOOSE_POSITIONS[3]))
-            rotate_to(3,(W,S))
-            mouse(p.SDL_MOUSEMOTION,connection_center((2,1)))
-            picture(app)
-            assert game.connection.held == 3
-            assert max(abs(a-b) for a,b in zip(app.view.connection_pointer,connection_center((2,1)))) < 1.5
-            if width == 1280:
-                pixels(app)
-                app.view.capture(app.output/'world-room-drag.png')
-            mouse(p.SDL_MOUSEBUTTONUP,connection_center((2,1)))
-            put(4,(2,2),(N,E) if width == 1280 else (N,W))
-            put(2,(3,2),(W,E))
-            if width == 960:
-                mouse(p.SDL_MOUSEBUTTONDOWN,connection_center((2,2)))
-                mouse(p.SDL_MOUSEBUTTONUP,connection_center((2,2)))
-                press(app,p.SDLK_r)
+            # 별도 오답 사례: 출구만 연결/문양 하나만 연결해도 바닥은 열리지 않는다.
+            for index,piece in enumerate(game.connection.pieces):
+                if piece.cell is not None:
+                    mouse(p.SDL_MOUSEBUTTONDOWN,connection_center(piece.cell))
+                    mouse(p.SDL_MOUSEBUTTONUP,room_screen(*LOOSE_POSITIONS[index]))
+            wrong_route = (((0,1),(0,2),(1,2),(2,2),(3,2)) if width == 1280 else
+                           ((0,1),(1,1),(2,1),(2,2),(3,2)))
+            for item in placement(wrong_route):put(*item)
+            assert game.connection.exit_connected and not game.connection.completed
+            assert len(game.connection.reached_runes) == (0 if width == 1280 else 1)
+            assert any('문양이 빠졌습니다' in text for text in labels(app))
+            rune_pixels()
+
+            # 시간 측정은 새 회차의 보통 진입부터 시작하며 검사 중 타이머를 고치지 않는다.
+            game = native_start();enter()
+            advance(15.)
+            mouse(p.SDL_MOUSEBUTTONDOWN,room_screen(*LOOSE_POSITIONS[8]))
+            mouse(p.SDL_MOUSEMOTION,connection_center((0,3)))
+            assert game.connection.held == 8
+            assert max(abs(a-b) for a,b in zip(app.view.connection_pointer,connection_center((0,3)))) < 1.5
+            rune_pixels();capture_window(width,height,f'runed-room-progress-{width}.png')
+            mouse(p.SDL_MOUSEBUTTONUP,room_screen(*LOOSE_POSITIONS[8]))
+            assert game.connection.pieces[8].cell is None
+            route = ROUTES[0 if width == 1280 else 1]
+            items = placement(route)
+            for offset,item in enumerate(items):
+                index,cell,ports = item
+                if width == 960 and offset == len(items)-1:
+                    put(index,cell,frozenset((port-1)%4 for port in ports))
+                    assert not game.connection.completed
+                    mouse(p.SDL_MOUSEBUTTONDOWN,connection_center(cell))
+                    mouse(p.SDL_MOUSEBUTTONUP,connection_center(cell))
+                    press(app,p.SDLK_r)
+                else:put(*item)
+                assert game.connection.reached_runes == frozenset(RUNES).intersection(route[:offset+1])
+                if offset == 5:
+                    # 입구를 떼면 표시도 즉시 미연결로 돌아가며 잘못 놓으면 복구된다.
+                    first = items[0]
+                    mouse(p.SDL_MOUSEBUTTONDOWN,connection_center(first[1]))
+                    assert not game.connection.reached_runes
+                    assert '태양 · 미연결' in labels(app) and '초승달 · 미연결' in labels(app)
+                    mouse(p.SDL_MOUSEBUTTONUP,connection_center(items[1][1]))
+                    assert game.connection.reached_runes == frozenset(RUNES).intersection(route[:offset+1])
             assert game.connection.completed and game.state == 'path_room' and not game.path_completed
             assert game.puzzle_reserved_phase is None and not game.puzzle_open
-            for point in ((-.5,1.5),(.5,1.5),(1.5,1.5)):
-                walk_to(point)
-            if width == 1280:
-                picture(app);pixels(app)
-                app.view.capture(app.output/'world-room-walking.png')
-            for point in ((2.5,1.5),(2.5,2.5),(3.5,2.5),(4.5,2.5)):
+            assert '태양 · 연결됨' in labels(app) and '초승달 · 연결됨' in labels(app)
+            rune_pixels()
+            with patch.object(app.view,'line',wraps=app.view.line) as lines:
+                picture(app)
+            for left,top,right,bottom in game.world_path.barriers:
+                ax,ay = app.view.world(left,top);bx,by = app.view.world(right,bottom)
+                assert any(call.args == (ax,ay-4,bx,by-4,(174,161,126)) for call in lines.call_args_list)
+            blocked = next((a,b) for a in route for b in route
+                           if abs(a[0]-b[0])+abs(a[1]-b[1]) == 1
+                           and abs(route.index(a)-route.index(b)) != 1)
+            walk_to((-.5,1.5))
+            tested_wall = False
+            mapping = {(-1,0):p.SDLK_w,(1,0):p.SDLK_s,(0,-1):p.SDLK_d,(0,1):p.SDLK_a}
+            for cell in route:
+                point = cell[0]+.5,cell[1]+.5
                 walk_to(point)
                 assert game.state == 'path_room' and not game.path_completed
+                if cell == blocked[0]:
+                    dx,dy = blocked[1][0]-cell[0],blocked[1][1]-cell[1]
+                    keys(app,(mapping[dx,dy],));tick(25);keys(app)
+                    assert (game.player.x-point[0])*dx+(game.player.y-point[1])*dy <= .290001
+                    walk_to(point);tested_wall = True
+            assert tested_wall
+            walk_to((4.5,2.5))
+            assert game.state == 'path_room' and not game.path_completed
+            capture_window(width,height,f'runed-room-complete-{width}.png')
             walk_to((5.6,2.5))
             assert game.state == 'explore' and game.path_completed and game.can_stand(game.player.x,game.player.y)
             assert (game.player.x,game.player.y)==(19.5,9.5) and game.path_exit in game.visited
             assert game.puzzle_reserved_phase is None and not game.attack_hits_ms
-            if width == 1280:
-                tick(20);pixels(app)
-                app.view.capture(app.output/'world-room-arrival.png')
+            forward_time = game.phase_time
             enter()
             assert game.world_path.reverse
             with patch.object(app.view,'text',wraps=app.view.text) as text:
                 picture(app)
-            ex,ey = app.view.world(-3,1.5)
-            ox,oy = app.view.world(5.7,2.5)
-            assert any(call.args[:3] == ('출구',ex,ey+18) for call in text.call_args_list)
-            assert any(call.args[:3] == ('입구 · 후퇴',ox,oy+18) for call in text.call_args_list)
+            ex,ey = app.view.world(-3,1.5);ox,oy = app.view.world(5.7,2.5)
+            assert any(call.args[:3] == ('출구',ex,ey-84) for call in text.call_args_list)
+            assert any(call.args[:3] == ('입구 · 후퇴',ox+30,oy+18) for call in text.call_args_list)
             assert any('맞은편 문까지' in call.args[0] for call in text.call_args_list)
-            for point in ((4.5,2.5),(3.5,2.5),(2.5,2.5),(2.5,1.5),(.5,1.5),(-1.5,1.5),(-2.8,1.5)):
+            capture_window(width,height,f'runed-room-reverse-{width}.png')
+            for point in ((4.5,2.5),*((x+.5,y+.5) for x,y in reversed(route)),(-.5,1.5),(-1.5,1.5),(-2.8,1.5)):
                 walk_to(point)
             assert game.state == 'explore' and (game.player.x,game.player.y) == (8.5,1.5)
-            print(f'PASS: {width}x{height} spawn/torch/W/F, open-entry frame, doorway walk/darkness; iso drag/R/cancel; native WASD corners and physical exit alone land across immediately.')
-            print(f'PASS: {width}x{height} reverse entry swaps retreat/exit markers and goal text; native WASD returns to the original maze doorway.')
+            assert game.phase_time < PHASE_SECONDS
+            print(f'PASS: {width}x{height} actual 9 slabs: all loose slots/four rotations/shelf return, bad drop/Esc/focus rollback, missing-rune exit refusal, live rune pixels and closed-side SDL blocking; both rune orders solve.')
+            print(f'PASS: {width}x{height} native torch/W/F/entry -> assemble -> physical exit -> reverse return; scripted 15s reading + edits + blocked-side attempt included: outward {forward_time:.2f}s, round trip {game.phase_time:.2f}s/60s; not human play timing.')
         press(app,p.SDLK_r)
         fresh=app.game
         assert fresh is not game and not fresh.path_completed
