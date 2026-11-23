@@ -9,11 +9,11 @@ import pico2d.pico2d as p
 from .maze_model import BASE_SIGHT_RADIUS, TORCH_SIGHT_RADIUS, COLS, ROWS, PHASES, TRAP_LENGTH
 from .maze_model import PHASE_SECONDS, SHIFT_SECONDS, SHIFT_SWAP_AT
 from .maze_model import ATTACK_FORWARD, DEFAULT_ATTACK_HIT_MS, HALF_TILE_W, HALF_TILE_H, project
-from .trap_view import Corridor
+from .trap_view import Corridor, VERTEX
 from .mouse_maze import MAZE, cell_center, cell_rect
 from .path_connection import DIRECTIONS as CONNECTION_DIRECTIONS
-from .puzzle_layout import PUZZLE_TABS, CONNECTION_BOARD, CONNECTION_SHELF, CONNECTION_SLOTS
-from .puzzle_layout import contains, connection_cell, connection_center
+from .puzzle_layout import ROOM_ORIGIN, ROOM_SCALE, room_point, connection_cell, on_loose_floor
+from .world_path_room import FIXED_FLOOR, LOOSE_POSITIONS, ENTER_SECONDS
 
 LW, LH, SCALE = 640, 400, 2
 MAP_RECT = (0, 0, LW, LH)
@@ -304,7 +304,7 @@ class View:
             return
         self.world_scale = 1
         px, py = project(game.player.x, game.player.y)
-        if self.camera_game is not game or self.last_mode == 'trap':
+        if self.camera_game is not game or self.last_mode in ('trap','path_room'):
             self.camera_game = game
             self.camera = (center_x-px, center_y-py)
         cx, cy = self.camera
@@ -331,6 +331,9 @@ class View:
     def shortcut(self, x, y, facing, arrival, tint):
         frame = ('trap_arrival_' if arrival else 'trap_entry_')+facing
         self.atlas(x, y, 'shortcuts', frame, tint)
+
+    def path_door(self, x, y, facing, opened, tint):
+        self.atlas(x,y,'shortcuts',f'puzzle_{"open" if opened else "closed"}_{facing}',tint)
 
     @staticmethod
     def boulder_sign_mount(game):
@@ -523,6 +526,18 @@ class View:
                 self.rectangle(sx-radius, sy+6*self.world_scale, radius*2, 2,
                                (*color, round(100+40*pulse)))
 
+        for cell,arrival in ((game.path_entry,False),(game.path_exit,True)):
+            if cell is None or (cell not in game.visible and not game.reveal_all):
+                continue
+            x,y,facing = self.shortcut_mount(game,cell)
+            entering = (game.state == 'path_room' and game.world_path.stage == 'entering'
+                        and cell == (game.path_exit if game.world_path.reverse else game.path_entry))
+            place(self.path_door,x,y,facing,game.path_completed or entering,self.tile_tint(game,*cell))
+            sx,sy = self.world(cell[0]+.5,cell[1]+.5)
+            color = (151,210,174) if not arrival or game.path_completed else (173,167,142)
+            markers.append(('L',sx+18*self.world_scale,sy,color))
+            self.line(sx-10*self.world_scale,sy+6*self.world_scale,sx+10*self.world_scale,sy+6*self.world_scale,color)
+
         if game.guard_hp and (game.guard in game.visible or game.reveal_all):
             x, y = game.guard
             place(self.guardian, game.guard_x, game.guard_y, game, self.tile_tint(game, x, y))
@@ -618,6 +633,9 @@ class View:
             return game.trap_cell, 'F 칼날방'
         if game.boulder_available():
             return game.boulder_entry, 'F 진입'
+        if game.path_available():
+            cell = game.path_exit if game.path_completed and game.close_to(game.path_exit) else game.path_entry
+            return cell,'F 길의 방'
         if game.close_to(game.fountain):
             return None if game.fountain_used else (game.fountain, 'F 샘물 회복')
         if game.close_to(game.exit):
@@ -711,19 +729,10 @@ class View:
             self.image(material, rect, (x % 9*130, y % 9*130, 130, 130), tint)
 
         self.image('mouse-maze-panel', (16, 37, 488, 326))
-        for key,label,rect in PUZZLE_TABS:
-            self.hud_panel(rect)
-            x,y,w,h = rect
-            active = key == game.puzzle_tab
-            if active:
-                self.rectangle(x+4,y+h-3,w-8,2,ember)
-            self.text(label,x+w/2,y+h/2,parchment if active else muted,size='hud_font',center=True)
+        self.text('마우스 미로',66,68,parchment,size='title')
         self.text('Esc 닫기',394,68,muted,size='font')
         if game.guard_attack_at is not None:
-            self.text('수호자 공격 예고',421,87,(239,164,109),center=True)
-        if game.puzzle_tab == 'connection':
-            self.connection_panel(game)
-            return
+            self.text('수호자 공격 예고',270,68,(239,164,109),size='font')
         self.text('좌클릭을 누른 채 도착까지 선 잇기', 66, 94, parchment, size='font')
         self.text('버튼을 놓으면 커서에서 다시 시작', 66, 113, muted)
 
@@ -799,74 +808,90 @@ class View:
                         tint = (241, 203, 152) if solid else (133, 169, 134)
                     stone(rect, x, y, solid, tint)
 
-    def connection_outline(self, rect, color):
-        x,y,w,h = rect
-        for line in ((x,y,w,1),(x,y+h-1,w,1),(x,y,1,h),(x+w-1,y,1,h)):
-            self.rectangle(*line,color)
+    def room_rect(self, x, y, w, h, color, lift=0):
+        corners = [self.world(x,y),self.world(x+w,y),self.world(x+w,y+h),self.world(x,y+h)]
+        packed = b''.join(VERTEX.pack(corners[i][0],corners[i][1]-lift,*color[:3],
+                                     color[3] if len(color) == 4 else 255,0.,0.)
+                          for i in (0,1,2,0,2,3))
+        buffer = ctypes.create_string_buffer(packed)
+        p.SDL_SetRenderDrawBlendMode(p.renderer,p.SDL_BLENDMODE_BLEND)
+        assert p.SDL_RenderGeometry(p.renderer,None,ctypes.cast(buffer,ctypes.POINTER(p.SDL_Vertex)),6,None,0) == 0
 
-    def connection_piece(self, index, piece, rect, selected=False):
-        x,y,w,h = rect
-        self.rectangle(x+3,y+3,w,h,(9,10,9,190))
-        self.image('raw_wall',rect,(index%3*130,index//3*130,130,130),tint=(193,184,160))
-        self.rectangle(x,y,w,2,(151,141,115))
-        self.rectangle(x,y+h-3,w,3,(48,43,33))
-        cx,cy = x+w/2,y+h/2
-        for thickness,color in ((12,(48,37,24)),(8,(207,172,107)),(2,(240,208,146))):
-            self.rectangle(cx-thickness/2,cy-thickness/2,thickness,thickness,color)
+    def room_outline(self, cell, color, lift=0):
+        x,y = cell
+        corners = [self.world(x,y),self.world(x+1,y),self.world(x+1,y+1),self.world(x,y+1)]
+        for a,b in zip(corners,(*corners[1:],corners[0])):
+            self.line(a[0],a[1]-lift,b[0],b[1]-lift,color)
+
+    def room_piece(self, index, piece, center, completed=False, selected=False, lift=0):
+        cx,cy = center
+        sx,sy = self.world(cx,cy)
+        self.atlas(sx,sy+3,'terrain',f'floor_{index%4}',(42,39,31))
+        tint = (226,213,182) if completed else (167,162,139)
+        self.atlas(sx,sy-lift,'terrain',f'floor_{index%4}',tint)
+        for width,color in ((.34,(45,35,23)),(.23,(210,171,100)),(.045,(249,218,148))):
+            self.room_rect(cx-width/2,cy-width/2,width,width,color,lift)
             for port in piece.ports:
                 dx,dy = CONNECTION_DIRECTIONS[port]
                 if dx:
-                    self.rectangle(cx+min(0,dx*w/2),cy-thickness/2,w/2,thickness,color)
+                    self.room_rect(cx+min(0,dx*.5),cy-width/2,.5,width,color,lift)
                 else:
-                    self.rectangle(cx-thickness/2,cy+min(0,dy*h/2),thickness,h/2,color)
+                    self.room_rect(cx-width/2,cy+min(0,dy*.5),width,.5,color,lift)
         if selected:
-            self.connection_outline(rect,(255,221,150))
+            self.room_outline((cx-.5,cy-.5),(253,220,141),lift)
 
-    def connection_panel(self, game):
+    def path_room_scene(self, game):
+        self.clear((0,0,0,255))
+        self.origin,self.world_scale = ROOM_ORIGIN,ROOM_SCALE
         puzzle = game.connection
-        self.text('석판을 끌어 빈칸에 놓기 · R 90° 회전',66,94,(234,219,183),size='font')
-        self.text('놓은 석판도 R로 회전 · 선반에 놓아 되돌리기',66,113,(186,172,146))
-        bx,by,size = CONNECTION_BOARD
-        self.rectangle(bx-2,by-2,size*4+4,size*4+4,(26,24,20))
+        for x,y in sorted(FIXED_FLOOR,key=lambda c:sum(c)):
+            self.atlas(*self.world(x+.5,y+.5),'terrain',f'floor_{(x+y)%4}',(151,150,130))
+        reverse = game.world_path.reverse
+        self.room_rect(-2.6,1.4,2.6,.2,(129,172,135) if reverse else (154,130,82))
+        self.room_rect(4,2.4,1.5,.2,(154,130,82) if reverse else (129,172,135))
         for y in range(4):
             for x in range(4):
-                rect = (bx+x*size,by+y*size,size-1,size-1)
-                self.image('raw_floor',rect,(x*130,y*130,130,130),tint=(93,94,83))
-                self.connection_outline(rect,(83,77,61))
-        self.hud_panel(CONNECTION_SHELF)
-        self.text('석판 선반',374,122,(194,180,147),center=True)
-        for x,y,label,color in ((bx-15,by+size*1.5,'입구',(232,201,134)),
-                                 (bx+size*4+15,by+size*2.5,'출구',(151,202,167))):
-            self.rectangle(x-15,y-6,30,12,(42,33,23))
-            self.rectangle(x-15,y-3,30,6,color)
-            self.text(label,x,y-16,color,center=True)
+                self.room_outline((x,y),(48,53,46))
         for index,piece in enumerate(puzzle.pieces):
-            if puzzle.held == index:
-                continue
-            x,y = connection_center(piece.cell) if piece.cell is not None else CONNECTION_SLOTS[index]
-            self.connection_piece(index,piece,(x-size/2,y-size/2,size,size),puzzle.selected == index)
-        status = '석판을 선택해 길을 이어 주세요'
+            if puzzle.held == index:continue
+            center = (piece.cell[0]+.5,piece.cell[1]+.5) if piece.cell is not None else LOOSE_POSITIONS[index]
+            self.room_piece(index,piece,center,puzzle.completed,puzzle.selected == index)
+        scene = [(-1.5,self.atlas,(*self.world(-3,1.5),'shortcuts','trap_entry_east',(172,180,151))),
+                 (8.5,self.atlas,(*self.world(6,2.5),'shortcuts','trap_arrival_west',(160,197,166))),
+                 (game.player.x+game.player.y,self.player,(*self.world(game.player.x,game.player.y),game))]
+        for _,draw,args in sorted(scene,key=lambda item:item[0]):draw(*args)
+        ex,ey = self.world(-3,1.5)
+        ox,oy = self.world(5.7,2.5)
+        self.text('출구' if reverse else '입구 · 후퇴',ex,ey+18,
+                  (161,215,177) if reverse else (207,194,155),size='font',center=True)
+        self.text('입구 · 후퇴' if reverse else '출구',ox,oy+18,
+                  (207,194,155) if reverse else (161,215,177),size='font',center=True)
+        self.text('끊긴 길의 방',320,56,(226,211,172),size='hud_font',center=True)
+        status = '석판을 끌어 빈틈에 놓기 · R 회전'
         point = self.connection_pointer
         if puzzle.dragging and point is not None:
             cell = connection_cell(point)
-            shelf = contains(CONNECTION_SHELF,point)
-            valid = shelf or (cell is not None and puzzle.piece_at(cell) is None)
-            accent = (154,208,165) if valid else (220,126,99)
-            if cell is not None:
-                x,y = connection_center(cell)
-                rect = (x-size/2,y-size/2,size,size)
-                self.rectangle(*rect,(*accent,50))
-                self.connection_outline((rect[0]-2,rect[1]-2,size+4,size+4),accent)
-            elif shelf:
-                self.connection_outline(CONNECTION_SHELF,accent)
-            status = '선반으로 돌려놓기' if shelf else '놓기 · R 회전' if valid else '놓으면 원위치로 돌아갑니다'
-            self.connection_piece(puzzle.held,puzzle.pieces[puzzle.held],
-                                  (point[0]-size/2,point[1]-size/2,size,size),True)
-        elif puzzle.selected is not None:
-            status = '선택한 석판 · R 회전 / 다시 끌어 이동'
-        self.text(status,264,311,(229,206,158),size='font',center=True)
-        self.text(f'완성하면 다음 {PHASES[game.next_phase]}에 문 개방 · Esc 닫기',264,333,
-                  (210,199,174),size='font',center=True)
+            floor = on_loose_floor(point)
+            valid = floor or (cell is not None and puzzle.piece_at(cell) is None)
+            color = (160,224,178) if valid else (230,118,92)
+            if cell is not None:self.room_outline(cell,color)
+            status = '원래 바닥 자리로 돌려놓기' if floor else '놓기 · R 회전' if valid else '놓으면 원위치로 복구'
+            self.room_piece(puzzle.held,puzzle.pieces[puzzle.held],room_point(point),False,True,8)
+        elif puzzle.completed:
+            status = 'WASD로 완성된 길을 걸어 맞은편 문까지'
+        self.text(status,350,364,(231,211,167),size='font',center=True)
+        self.text('Esc 들어온 문으로 후퇴 · 맞은편 문을 지나 통과',350,383,(177,180,160),center=True)
+
+    def path_entry_fade(self, game):
+        t = min(1.,game.world_path.elapsed/ENTER_SECONDS)
+        x,y = self.world(game.player.x,game.player.y)
+        y -= 24
+        radius = max(24,round(700*(1-t)))
+        left,right = max(0,round(x-radius)),min(LW,round(x+radius))
+        top,bottom = max(0,round(y-radius*.65)),min(LH,round(y+radius*.65))
+        for rect in ((0,0,LW,top),(0,bottom,LW,LH-bottom),(0,top,left,bottom-top),(right,top,LW-right,bottom-top)):
+            if rect[2] > 0 and rect[3] > 0:self.rectangle(*rect,(0,0,0))
+        if t > .78:self.rectangle(0,0,LW,LH,(0,0,0,round(255*(t-.78)/.22)))
 
     def puzzle_route(self, game):
         puzzle = game.puzzle
@@ -907,16 +932,21 @@ class View:
         if game.boulder_completed:
             dx,dy = game.boulder_exit
             self.badge('D',ox+(dx+.5)*step+9,oy+(dy+.5)*step,(127,197,183))
+        for cell,shown in ((game.path_entry,game.path_discovered),(game.path_exit,game.path_completed)):
+            if cell is not None and shown:
+                self.badge('L',ox+(cell[0]+.5)*step,oy+(cell[1]+.5)*step,(151,210,174))
         x,y=game.player.x,game.player.y
         self.rectangle(ox+x*step-2,oy+y*step-2,5,5,(231,214,156))
         self.text('노랑: 플레이어    A/B: 칼날 입구·도착점',320,365,center=True)
-        self.text('C/D: 돌 입구·도착점',320,383,center=True)
+        self.text('C/D: 돌 입구·도착점 · L: 길의 방',320,383,center=True)
         if game.guard_attack_at is not None:
             self.text('수호자 공격 예고',459,37,(255,204,112),size='font')
 
     def draw(self, game, fps=0):
         p.canvas_width,p.canvas_height=LW,LH
         native_trap = game.state == 'trap'
+        path_active = game.state == 'path_room' and game.world_path.stage == 'active'
+        path_entering = game.state == 'path_room' and game.world_path.stage == 'entering'
         if native_trap:
             p.SDL_SetRenderTarget(p.renderer,self.display)
             self.trap(game)
@@ -924,7 +954,12 @@ class View:
             self.clear((0,0,0,0))
         else:
             p.SDL_SetRenderTarget(p.renderer,self.logical)
-            self.quarter(game)
+            if path_active:
+                self.path_room_scene(game)
+            else:
+                self.quarter(game)
+            if path_entering:
+                self.path_entry_fade(game)
         if native_trap:
             self.hud_boulder(game) if game.trap_kind == 'boulder' else self.hud_trap(game)
         else:
@@ -942,10 +977,10 @@ class View:
             self.text('실패',275,180,(218,126,109),size='big')
             self.text('체력이 0이 됐습니다 · R 새 회차',230,236,size='font')
         # 탐색↔변형에는 전체 암전을 넣지 않아 벽 연출과 고정 HUD가 보이게 한다.
-        display_mode = 'explore' if game.state in ('shifting', 'puzzle') else game.state
+        display_mode = 'explore' if game.state in ('shifting', 'puzzle') or path_entering else game.state
         kind = game.trap_kind if native_trap else None
         if self.mode_game is not game or self.last_mode != display_mode or self.last_trap_kind != kind:
-            returning = self.mode_game is game and self.last_mode == 'trap' and display_mode == 'explore'
+            returning = self.mode_game is game and self.last_mode in ('trap','path_room') and display_mode == 'explore'
             # Show the landing point even on the first frame of the return fade.
             self.mode_fade_strength = .5 if returning else 1.
             self.mode_game = game

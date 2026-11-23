@@ -1,37 +1,42 @@
-"""퍼즐 패널의 논리 픽셀 배치. 입력과 렌더가 같은 영역을 사용한다."""
-PUZZLE_TABS = (('maze','마우스 미로',(66,52,120,28)),
-               ('connection','통로 연결',(196,52,120,28)))
-CONNECTION_BOARD = (70,126,42)
-CONNECTION_SHELF = (282,130,184,164)
-CONNECTION_SLOTS = ((314,158),(406,154),(354,208),(314,264),(416,260))
+"""월드 통로 방의 쿼터뷰 투영과 동일한 역투영 피킹."""
+import math
+from .maze_model import project, HALF_TILE_W, HALF_TILE_H
+from .world_path_room import LOOSE_POSITIONS
+
+ROOM_ORIGIN = (375,166)
+ROOM_SCALE = 1.1
 
 
-def contains(rect, point):
-    x,y,w,h = rect
-    return point is not None and x <= point[0] < x+w and y <= point[1] < y+h
+def room_screen(x, y):
+    sx,sy = project(x,y)
+    return ROOM_ORIGIN[0]+sx*ROOM_SCALE,ROOM_ORIGIN[1]+sy*ROOM_SCALE
 
 
-def tab_at(point):
-    return next((key for key,_,rect in PUZZLE_TABS if contains(rect,point)),None)
+def room_point(point):
+    x = (point[0]-ROOM_ORIGIN[0])/ROOM_SCALE/HALF_TILE_W
+    y = (point[1]-ROOM_ORIGIN[1])/ROOM_SCALE/HALF_TILE_H
+    return (x+y)/2,(y-x)/2
 
 
 def connection_cell(point):
-    x,y,size = CONNECTION_BOARD
-    if contains((x,y,size*4,size*4),point):
-        return int((point[0]-x)//size),int((point[1]-y)//size)
-    return None
+    x,y = room_point(point)
+    return (math.floor(x),math.floor(y)) if 0 <= x < 4 and 0 <= y < 4 else None
 
 
 def connection_center(cell):
-    x,y,size = CONNECTION_BOARD
-    return x+(cell[0]+.5)*size,y+(cell[1]+.5)*size
+    return room_screen(cell[0]+.5,cell[1]+.5)
+
+
+def on_loose_floor(point):
+    x,y = room_point(point)
+    return -3 <= x < -1 and 0 <= y < 4
 
 
 def connection_piece_at(puzzle, point):
     cell = connection_cell(point)
     if cell is not None:
         return puzzle.piece_at(cell)
-    size = CONNECTION_BOARD[2]
-    return next((index for index,(x,y) in enumerate(CONNECTION_SLOTS)
+    x,y = room_point(point)
+    return next((index for index,(cx,cy) in enumerate(LOOSE_POSITIONS)
                  if puzzle.pieces[index].cell is None and puzzle.held != index
-                 and contains((x-size/2,y-size/2,size,size),point)),None)
+                 and abs(x-cx) < .5 and abs(y-cy) < .5),None)

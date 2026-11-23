@@ -5,7 +5,7 @@ import pico2d.pico2d as p
 from .maze_model import Game
 from .game_view import View, LW, LH, PUZZLE_OFFSET_X
 from .game_audio import Audio
-from .puzzle_layout import tab_at, connection_cell, connection_piece_at, contains, CONNECTION_SHELF
+from .puzzle_layout import connection_cell, connection_piece_at, on_loose_floor
 
 
 class PlayMode:
@@ -45,8 +45,11 @@ class PlayMode:
                 if event.key.repeat:
                     continue
                 key = event.key.keysym.sym
-                if key == p.SDLK_r and self.game.state == 'puzzle' and self.game.puzzle_tab == 'connection':
+                if key == p.SDLK_r and self.game.state == 'path_room':
                     self.game.rotate_connection()
+                    continue
+                if (self.game.state == 'path_room' and self.game.world_path.stage == 'entering'
+                        and key not in (p.SDLK_ESCAPE,p.SDLK_F10)):
                     continue
                 # 변형과 퍼즐 중 이동 키를 보관하지 않는다.
                 if self.game.state in ('shifting', 'puzzle') and key not in (p.SDLK_r, p.SDLK_ESCAPE, p.SDLK_F10):
@@ -55,6 +58,8 @@ class PlayMode:
                 if key == p.SDLK_ESCAPE:
                     if self.game.map_open:
                         self.game.map_open = False
+                    elif self.game.state == 'path_room':
+                        self.game.return_from_path()
                     elif self.game.state == 'puzzle':
                         self.game.close_puzzle()
                     elif self.game.state == 'trap':
@@ -81,35 +86,32 @@ class PlayMode:
                     self.view.capture(self.output/'manual.png')
                     self.game.message('output/topdown/manual.png 저장')
             elif event.type == p.SDL_MOUSEBUTTONDOWN and event.button.button == p.SDL_BUTTON_LEFT:
-                if self.game.state == 'puzzle':
+                if self.game.state in ('puzzle','path_room'):
                     if not self.puzzle_mouse_held:
                         point = self.mouse_point(event.button)
-                        tab = tab_at(point)
-                        if tab is not None:
-                            self.game.switch_puzzle_tab(tab)
-                        elif self.game.puzzle_tab == 'connection':
+                        if self.game.state == 'path_room':
                             self.view.connection_pointer = point
                             index = connection_piece_at(self.game.connection,point)
                             if index is not None:
-                                self.game.connection.pick(index)
+                                self.game.pick_connection(index)
                         else:
                             self.game.puzzle.press(point)
                     self.puzzle_mouse_held = True
                 elif not self.puzzle_mouse_held:
                     self.game.attack()
             elif event.type == p.SDL_MOUSEBUTTONUP and event.button.button == p.SDL_BUTTON_LEFT:
-                if self.game.state == 'puzzle' and self.game.puzzle_tab == 'connection' and self.puzzle_mouse_held:
+                if self.game.state == 'path_room' and self.puzzle_mouse_held:
                     point = self.mouse_point(event.button)
-                    self.game.drop_connection(connection_cell(point),shelf=contains(CONNECTION_SHELF,point))
+                    self.game.drop_connection(connection_cell(point),shelf=on_loose_floor(point))
                 self.game.puzzle.release()
                 self.puzzle_mouse_held = False
             elif event.type == p.SDL_MOUSEMOTION:
                 if not event.motion.state & p.SDL_BUTTON_LMASK:
                     self.game.cancel_puzzle_drag()
                     self.puzzle_mouse_held = False
-                elif self.game.state == 'puzzle':
+                elif self.game.state in ('puzzle','path_room'):
                     point = self.mouse_point(event.motion)
-                    if self.game.puzzle_tab == 'connection':
+                    if self.game.state == 'path_room':
                         self.view.connection_pointer = point
                     else:
                         self.game.drag_puzzle(point)
@@ -127,7 +129,7 @@ class PlayMode:
         dx = int(p.SDLK_d in self.held)-int(p.SDLK_a in self.held)
         dy = int(p.SDLK_s in self.held)-int(p.SDLK_w in self.held)
         previous = self.game.state
-        if previous == 'explore':
+        if previous in ('explore','path_room'):
             # 일반 미로에서는 W가 격자 -X 통로, D가 격자 -Y 통로 방향이다.
             dx, dy = dy, -dx
         self.game.update(dt,dx,dy,bool(self.held & {p.SDLK_LSHIFT,p.SDLK_RSHIFT}),
