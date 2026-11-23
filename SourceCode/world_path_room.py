@@ -2,10 +2,13 @@
 from .path_connection import PathConnection
 
 ENTER_SECONDS = 1.0
+# 바닥 12.85칸 + 진입 1초(보행 2.5칸 상당)를 올림한 보수적 숏컷 비용.
+TRAVERSE_CELLS = 16
 START = (-2.3,1.5)
 REVERSE_START = (5.2,2.5)
-LOOSE_POSITIONS = ((-2.5,.5),(-1.5,.5),(-2.5,2.5),(-1.5,2.5),(-2.5,3.5))
-FIXED_FLOOR = frozenset({(x,y) for x in (-3,-2) for y in range(4)} | {(-1,1),(4,2),(5,2)})
+LOOSE_POSITIONS = ((-2.5,-.5),(-1.5,-.5),(-1.5,.5),(-2.5,2.5),(-1.5,2.5),
+                   (-2.5,3.5),(-1.5,3.5),(-2.5,4.5),(-1.5,4.5))
+FIXED_FLOOR = frozenset({(x,y) for x in (-3,-2) for y in range(-1,5)} | {(-1,1),(4,2),(5,2)})
 
 
 class WorldPathRoom:
@@ -30,6 +33,27 @@ class WorldPathRoom:
 
     def solid(self, x, y):
         return (x,y) not in self.floor
+
+    @property
+    def barriers(self):
+        """인접 바닥도 같은 경로의 열린 포트가 아니면 경계를 막는다."""
+        route = self.puzzle.route() if self.puzzle.completed else ()
+        floor = FIXED_FLOOR | set(route)
+        open_edges = {frozenset((a,b)) for a,b in zip(route,route[1:])}
+        if route:
+            open_edges.update((frozenset(((-1,1),route[0])),frozenset((route[-1],(4,2)))))
+        walls = []
+        for x,y in sorted(floor):
+            for dx,dy in ((1,0),(0,1)):
+                other = x+dx,y+dy
+                if other not in floor or ((x,y) in FIXED_FLOOR and other in FIXED_FLOOR):continue
+                if frozenset(((x,y),other)) not in open_edges:
+                    walls.append((x+1,y,x+1,y+1) if dx else (x,y+1,x+1,y+1))
+        return tuple(walls)
+
+    def clear_at(self, x, y, radius):
+        return not any(x-radius < right and x+radius > left and y-radius < bottom and y+radius > top
+                       for left,top,right,bottom in self.barriers)
 
     def endpoint(self, x, y):
         if x < -2.72 and abs(y-1.5) < .35:

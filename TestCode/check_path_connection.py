@@ -2,6 +2,7 @@
 from itertools import product
 
 from SourceCode.path_connection import PathConnection, COLS, ROWS, ENTRY, EXIT, N, E, S, W
+from .path_connection_fixture import legacy_path_connection
 
 
 def snapshot(puzzle):
@@ -24,11 +25,11 @@ def check_moves():
     initial = snapshot(puzzle)
     assert (COLS,ROWS,ENTRY,EXIT) == (4,4,((0,1),W),((3,2),E))
     assert [piece.kind for piece in puzzle.pieces].count('straight') == 3
-    assert [piece.kind for piece in puzzle.pieces].count('corner') == 2
+    assert [piece.kind for piece in puzzle.pieces].count('corner') == 6
     assert all(piece.cell is None for piece in puzzle.pieces)
     assert not puzzle.completed and not puzzle.is_connected() and not puzzle.dragging
     assert not puzzle.rotate() and not puzzle.drop() and not puzzle.cancel()
-    for index in (-1,5,None,1.5,True):
+    for index in (-1,9,None,1.5,True):
         assert not puzzle.pick(index) and snapshot(puzzle) == initial
 
     assert puzzle.pick(0) and puzzle.dragging and puzzle.held == puzzle.selected == 0
@@ -70,6 +71,7 @@ def check_moves():
     print('PASS: inventory, clockwise rotation, relocation, shelf return, invalid drops and full cancel/reset rollback.')
 
 
+@legacy_path_connection
 def check_solutions():
     # 아래로 꺾이는 열이 0~3인 네 경로를 실제 잡기·회전·드롭으로 완성한다.
     for turn in range(4):
@@ -95,6 +97,7 @@ def check_solutions():
     print('PASS: four valid routes finish only on a committed drop, freeze on completion and reset cleanly.')
 
 
+@legacy_path_connection
 def check_rotation_commit():
     puzzle = PathConnection()
     for index,cell,ports in ((0,(0,1),(W,E)),(1,(1,1),(W,E)),(2,(3,2),(W,E)),
@@ -111,6 +114,7 @@ def check_rotation_commit():
     print('PASS: held rotations stay provisional; canceled winning rotations do not complete; last-selected board rotation commits.')
 
 
+@legacy_path_connection
 def check_ports():
     puzzle = PathConnection()
     cells = ((0,1),(1,1),(3,2),(2,1),(2,2))

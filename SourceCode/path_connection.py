@@ -6,7 +6,9 @@ N, E, S, W = range(4)
 DIRECTIONS = ((0,-1),(1,0),(0,1),(-1,0))
 ENTRY = (0,1),W
 EXIT = (3,2),E
-INITIAL_PIECES = (('straight',1),('straight',0),('straight',1),('corner',2),('corner',0))
+RUNES = ((1,3),(2,1))
+INITIAL_PIECES = (('straight',1),('straight',0),('straight',1),
+                  ('corner',2),('corner',0),('corner',1),('corner',3),('corner',1),('corner',2))
 
 
 @dataclass
@@ -93,19 +95,35 @@ class PathConnection:
         return bool(self.route())
 
     def route(self):
-        """유효한 입구~출구 경로의 셀을 순서대로 반환한다. 불완전하면 빈 튜플이다."""
+        """입구·두 문양·출구가 같은 경로에 있어야 유효하다. 문양 순서는 없다."""
+        path,reached_exit = self._trace()
+        return path if reached_exit and set(RUNES) <= set(path) else ()
+
+    @property
+    def connected_cells(self):
+        return self._trace()[0]
+
+    @property
+    def reached_runes(self):
+        return frozenset(RUNES).intersection(self.connected_cells)
+
+    @property
+    def exit_connected(self):
+        return self._trace()[1]
+
+    def _trace(self):
         board = {piece.cell:piece for piece in self.pieces if piece.cell is not None}
         cell,incoming = ENTRY
         route = []
         while cell not in route:
-            route.append(cell)
             piece = board.get(cell)
             if piece is None or incoming not in piece.ports:
-                return ()
+                return tuple(route),False
+            route.append(cell)
             if cell == EXIT[0] and EXIT[1] in piece.ports:
-                return tuple(route)
+                return tuple(route),True
             outgoing = next(port for port in piece.ports if port != incoming)
             dx,dy = DIRECTIONS[outgoing]
             cell = cell[0]+dx,cell[1]+dy
             incoming = (outgoing+2)%4
-        return ()
+        return tuple(route),False

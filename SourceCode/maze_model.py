@@ -5,7 +5,7 @@ import math
 import random
 from transitions import Machine
 from .mouse_maze import MouseMaze
-from .world_path_room import WorldPathRoom, ENTER_SECONDS, START, REVERSE_START
+from .world_path_room import WorldPathRoom, ENTER_SECONDS, START, REVERSE_START, TRAVERSE_CELLS
 
 COLS, ROWS = 31, 23
 # 쿼터뷰 지면의 반쪽 타일 크기. 렌더링과 이동 속도 계산이 같은 투영을 사용한다.
@@ -414,16 +414,19 @@ class Game:
                          key=lambda cell:(ds[cell],cell))
         arrivals = sorted((cell for cell,distance in de.items() if 8 <= distance <= 24 and usable(cell)),
                           key=lambda cell:(ds[cell]+de[cell] != ds[self.exit],abs(de[cell]-18),cell))
-        for limit in (8,12,18):
-            for entry in entries:
-                if ds[entry] > limit:continue
-                for arrival in arrivals:
-                    if math.dist(entry,arrival) < 4:continue
-                    # 보드와 두 문턱을 걷는 약 10칸까지 포함해 매 지형에서 더 짧아야 한다.
-                    if all(goal[arrival] >= 8 and spawn[entry]+goal[arrival]+10 < goal[self.spawn]
-                           for spawn,goal,_ in fields):
-                        return entry,arrival
-        return None
+        pairs = [(entry,arrival) for entry in entries for arrival in arrivals if math.dist(entry,arrival) >= 4]
+        def beneficial(pair, cost, from_spawn=True):
+            entry,arrival = pair
+            return all(goal[arrival] >= 8 and
+                       ((goal[self.spawn]-spawn[entry]) if from_spawn else goal[entry]) > cost+goal[arrival]
+                       for spawn,goal,_ in fields)
+        previous = next((pair for pair in pairs if beneficial(pair,10)),None)
+        if previous is not None and beneficial(previous,TRAVERSE_CELLS):return previous
+        primary = next((pair for pair in pairs if beneficial(pair,TRAVERSE_CELLS)),None)
+        if primary is not None:return primary
+        # 입구를 이미 만난 경우의 선택도 실제 방 보행보다 빨라야 한다. 시작점 이득은 검사에서 별도 공개한다.
+        if previous is not None and beneficial(previous,TRAVERSE_CELLS,False):return previous
+        return next((pair for pair in pairs if beneficial(pair,TRAVERSE_CELLS,False)),None)
 
     def choose_puzzle_gate(self):
         layouts = self.maze_layouts
@@ -564,9 +567,12 @@ class Game:
         return not (0 <= x < COLS and 0 <= y < ROWS) or grid[y][x] == 1
 
     def can_stand(self, x, y, grid=None):
-        return all(not self.solid(math.floor(x+dx), math.floor(y+dy), grid)
-                   for dx in (-PLAYER_HALF_SIZE, PLAYER_HALF_SIZE)
-                   for dy in (-PLAYER_HALF_SIZE, PLAYER_HALF_SIZE))
+        clear = all(not self.solid(math.floor(x+dx), math.floor(y+dy), grid)
+                    for dx in (-PLAYER_HALF_SIZE, PLAYER_HALF_SIZE)
+                    for dy in (-PLAYER_HALF_SIZE, PLAYER_HALF_SIZE))
+        if clear and grid is None and getattr(self,'state',None) == 'path_room' and self.world_path.stage == 'active':
+            return self.world_path.clear_at(x,y,PLAYER_HALF_SIZE)
+        return clear
 
     def move_straight(self, dx, dy):
         """입력 선을 따라 벽 직전까지만 이동하고, 실제 이동량을 돌려준다."""
@@ -575,27 +581,24 @@ class Game:
         x, y = self.player.x, self.player.y
         radius = PLAYER_HALF_SIZE
         fraction = 1.0
-        # 지나갈 영역의 벽만 확인한다. 끝점이 비어 있어도 중간 모퉁이는 통과할 수 없다.
-        for wall_y in range(math.floor(min(y, y+dy)-radius), math.floor(max(y, y+dy)+radius)+1):
-            for wall_x in range(math.floor(min(x, x+dx)-radius), math.floor(max(x, x+dx)+radius)+1):
-                if not self.solid(wall_x, wall_y):
-                    continue
-                # 벽을 몸 반폭만큼 넓히면 플레이어 중심을 점으로 계산할 수 있다.
-                enter, leave = -math.inf, math.inf
-                for position, delta, low, high in (
-                        (x, dx, wall_x-radius, wall_x+1+radius),
-                        (y, dy, wall_y-radius, wall_y+1+radius)):
-                    if delta == 0:
-                        if position <= low or position >= high:
-                            break
-                    else:
-                        first, last = (low-position)/delta, (high-position)/delta
-                        enter = max(enter, min(first, last))
-                        leave = min(leave, max(first, last))
+        walls = []
+        for wall_y in range(math.floor(min(y,y+dy)-radius),math.floor(max(y,y+dy)+radius)+1):
+            for wall_x in range(math.floor(min(x,x+dx)-radius),math.floor(max(x,x+dx)+radius)+1):
+                if self.solid(wall_x,wall_y):walls.append((wall_x,wall_y,wall_x+1,wall_y+1))
+        if self.state == 'path_room' and self.world_path.stage == 'active':
+            walls.extend(self.world_path.barriers)
+        for left,top,right,bottom in walls:
+            enter,leave = -math.inf,math.inf
+            for position,delta,low,high in ((x,dx,left-radius,right+radius),(y,dy,top-radius,bottom+radius)):
+                if delta == 0:
+                    if position <= low or position >= high:break
                 else:
-                    if enter <= leave and leave > 0 and enter <= fraction:
-                        gap = MOVE_EPSILON / max(abs(dx), abs(dy))
-                        fraction = max(0., enter-gap)
+                    first,last = (low-position)/delta,(high-position)/delta
+                    enter = max(enter,min(first,last));leave = min(leave,max(first,last))
+            else:
+                if enter <= leave and leave > 0 and enter <= fraction:
+                    gap = MOVE_EPSILON/max(abs(dx),abs(dy))
+                    fraction = max(0.,enter-gap)
         moved_x, moved_y = dx*fraction, dy*fraction
         if max(abs(moved_x), abs(moved_y)) < MOVE_EPSILON:
             return 0., 0.
