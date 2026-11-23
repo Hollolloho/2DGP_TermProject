@@ -5,6 +5,7 @@ import math
 import random
 from transitions import Machine
 from .mouse_maze import MouseMaze
+from .path_connection import PathConnection
 
 COLS, ROWS = 31, 23
 # 쿼터뷰 지면의 반쪽 타일 크기. 렌더링과 이동 속도 계산이 같은 투영을 사용한다.
@@ -274,6 +275,8 @@ class Game:
             self.maze_layouts.landmarks.update(boulder_entry=self.boulder_entry, boulder_exit=self.boulder_exit)
             self.maze_layouts.protected_cells.update(landmark_area((self.boulder_entry, self.boulder_exit)))
         self.puzzle = MouseMaze()
+        self.connection = PathConnection()
+        self.puzzle_tab = 'maze'
         self.puzzle_reserved_phase = None
         self.puzzle_open = False
         self.phase = self.layout_phase = run_number % 3
@@ -425,16 +428,46 @@ class Game:
 
     def close_puzzle(self):
         if self.state == 'puzzle':
-            self.puzzle.release()
+            self.cancel_puzzle_drag()
             self.leave_puzzle()
 
+    def cancel_puzzle_drag(self):
+        self.puzzle.release()
+        self.connection.cancel()
+
+    def switch_puzzle_tab(self, tab):
+        if self.state != 'puzzle' or tab not in ('maze','connection'):
+            return False
+        self.cancel_puzzle_drag()
+        self.puzzle_tab = tab
+        return True
+
     def drag_puzzle(self, point):
-        if self.state != 'puzzle' or not self.puzzle.move(point):
-            return
+        if self.state != 'puzzle' or self.puzzle_tab != 'maze' or not self.puzzle.move(point):
+            return False
+        return self._complete_puzzle()
+
+    def rotate_connection(self):
+        if self.state != 'puzzle' or self.puzzle_tab != 'connection':
+            return False
+        self.connection.rotate()
+        return self.connection.completed and self._complete_puzzle()
+
+    def drop_connection(self, cell=None, *, shelf=False):
+        if self.state != 'puzzle' or self.puzzle_tab != 'connection':
+            return False
+        self.connection.drop(cell,shelf=shelf)
+        return self.connection.completed and self._complete_puzzle()
+
+    def _complete_puzzle(self):
+        if self.state != 'puzzle' or self.puzzle_reserved_phase is not None or self.puzzle_open:
+            return False
         self.puzzle_reserved_phase = self.next_phase
         self.puzzle.reset()
+        self.connection.reset()
         self.close_puzzle()
         self.message(f'퍼즐 완료 · 다음 {PHASES[self.next_phase]}에 통로가 열립니다', 5)
+        return True
 
     def layout_for_phase(self, phase):
         grid = self.maze_layouts.copy_for_phase(phase)
@@ -514,6 +547,8 @@ class Game:
             self.return_from_trap()
         self.close_puzzle()
         self.puzzle.reset()
+        self.connection.reset()
+        self.puzzle_tab = 'maze'
         self.guard_attack_at = None
         self.guard_seen_until = 0.
         next_grid = self.layout_for_phase(self.next_phase)
