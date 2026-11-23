@@ -11,6 +11,9 @@ from .maze_model import PHASE_SECONDS, SHIFT_SECONDS, SHIFT_SWAP_AT
 from .maze_model import ATTACK_FORWARD, DEFAULT_ATTACK_HIT_MS, HALF_TILE_W, HALF_TILE_H, project
 from .trap_view import Corridor
 from .mouse_maze import MAZE, cell_center, cell_rect
+from .path_connection import DIRECTIONS as CONNECTION_DIRECTIONS
+from .puzzle_layout import PUZZLE_TABS, CONNECTION_BOARD, CONNECTION_SHELF, CONNECTION_SLOTS
+from .puzzle_layout import contains, connection_cell, connection_center
 
 LW, LH, SCALE = 640, 400, 2
 MAP_RECT = (0, 0, LW, LH)
@@ -66,6 +69,7 @@ class View:
         self.display_ready = False
         self.corridor = Corridor(self)
         self.boulder_scene = None
+        self.connection_pointer = None
         self.origin, self.world_scale = (0, 0), 1
         self.camera, self.camera_game = None, None
         self.light_game, self.light_time, self.torch_light = None, 0., 0.
@@ -707,12 +711,21 @@ class View:
             self.image(material, rect, (x % 9*130, y % 9*130, 130, 130), tint)
 
         self.image('mouse-maze-panel', (16, 37, 488, 326))
-        self.text('마우스 미로', 66, 68, parchment, size='title')
+        for key,label,rect in PUZZLE_TABS:
+            self.hud_panel(rect)
+            x,y,w,h = rect
+            active = key == game.puzzle_tab
+            if active:
+                self.rectangle(x+4,y+h-3,w-8,2,ember)
+            self.text(label,x+w/2,y+h/2,parchment if active else muted,size='hud_font',center=True)
+        self.text('Esc 닫기',394,68,muted,size='font')
+        if game.guard_attack_at is not None:
+            self.text('수호자 공격 예고',421,87,(239,164,109),center=True)
+        if game.puzzle_tab == 'connection':
+            self.connection_panel(game)
+            return
         self.text('좌클릭을 누른 채 도착까지 선 잇기', 66, 94, parchment, size='font')
         self.text('버튼을 놓으면 커서에서 다시 시작', 66, 113, muted)
-        self.text('Esc 닫기', 394, 68, muted, size='font')
-        if game.guard_attack_at is not None:
-            self.text('수호자 공격 예고',270,68,(239,164,109),size='font')
 
         self.rectangle(64, 132, 310, 174, mortar)
         tile_tints = {'#': wall_tint, 'G': (148, 119, 83)}
@@ -785,6 +798,75 @@ class View:
                         rect = (left+1, tile_top+1, width-2, height-2)
                         tint = (241, 203, 152) if solid else (133, 169, 134)
                     stone(rect, x, y, solid, tint)
+
+    def connection_outline(self, rect, color):
+        x,y,w,h = rect
+        for line in ((x,y,w,1),(x,y+h-1,w,1),(x,y,1,h),(x+w-1,y,1,h)):
+            self.rectangle(*line,color)
+
+    def connection_piece(self, index, piece, rect, selected=False):
+        x,y,w,h = rect
+        self.rectangle(x+3,y+3,w,h,(9,10,9,190))
+        self.image('raw_wall',rect,(index%3*130,index//3*130,130,130),tint=(193,184,160))
+        self.rectangle(x,y,w,2,(151,141,115))
+        self.rectangle(x,y+h-3,w,3,(48,43,33))
+        cx,cy = x+w/2,y+h/2
+        for thickness,color in ((12,(48,37,24)),(8,(207,172,107)),(2,(240,208,146))):
+            self.rectangle(cx-thickness/2,cy-thickness/2,thickness,thickness,color)
+            for port in piece.ports:
+                dx,dy = CONNECTION_DIRECTIONS[port]
+                if dx:
+                    self.rectangle(cx+min(0,dx*w/2),cy-thickness/2,w/2,thickness,color)
+                else:
+                    self.rectangle(cx-thickness/2,cy+min(0,dy*h/2),thickness,h/2,color)
+        if selected:
+            self.connection_outline(rect,(255,221,150))
+
+    def connection_panel(self, game):
+        puzzle = game.connection
+        self.text('석판을 끌어 빈칸에 놓기 · R 90° 회전',66,94,(234,219,183),size='font')
+        self.text('놓은 석판도 R로 회전 · 선반에 놓아 되돌리기',66,113,(186,172,146))
+        bx,by,size = CONNECTION_BOARD
+        self.rectangle(bx-2,by-2,size*4+4,size*4+4,(26,24,20))
+        for y in range(4):
+            for x in range(4):
+                rect = (bx+x*size,by+y*size,size-1,size-1)
+                self.image('raw_floor',rect,(x*130,y*130,130,130),tint=(93,94,83))
+                self.connection_outline(rect,(83,77,61))
+        self.hud_panel(CONNECTION_SHELF)
+        self.text('석판 선반',374,122,(194,180,147),center=True)
+        for x,y,label,color in ((bx-15,by+size*1.5,'입구',(232,201,134)),
+                                 (bx+size*4+15,by+size*2.5,'출구',(151,202,167))):
+            self.rectangle(x-15,y-6,30,12,(42,33,23))
+            self.rectangle(x-15,y-3,30,6,color)
+            self.text(label,x,y-16,color,center=True)
+        for index,piece in enumerate(puzzle.pieces):
+            if puzzle.held == index:
+                continue
+            x,y = connection_center(piece.cell) if piece.cell is not None else CONNECTION_SLOTS[index]
+            self.connection_piece(index,piece,(x-size/2,y-size/2,size,size),puzzle.selected == index)
+        status = '석판을 선택해 길을 이어 주세요'
+        point = self.connection_pointer
+        if puzzle.dragging and point is not None:
+            cell = connection_cell(point)
+            shelf = contains(CONNECTION_SHELF,point)
+            valid = shelf or (cell is not None and puzzle.piece_at(cell) is None)
+            accent = (154,208,165) if valid else (220,126,99)
+            if cell is not None:
+                x,y = connection_center(cell)
+                rect = (x-size/2,y-size/2,size,size)
+                self.rectangle(*rect,(*accent,50))
+                self.connection_outline((rect[0]-2,rect[1]-2,size+4,size+4),accent)
+            elif shelf:
+                self.connection_outline(CONNECTION_SHELF,accent)
+            status = '선반으로 돌려놓기' if shelf else '놓기 · R 회전' if valid else '놓으면 원위치로 돌아갑니다'
+            self.connection_piece(puzzle.held,puzzle.pieces[puzzle.held],
+                                  (point[0]-size/2,point[1]-size/2,size,size),True)
+        elif puzzle.selected is not None:
+            status = '선택한 석판 · R 회전 / 다시 끌어 이동'
+        self.text(status,264,311,(229,206,158),size='font',center=True)
+        self.text(f'완성하면 다음 {PHASES[game.next_phase]}에 문 개방 · Esc 닫기',264,333,
+                  (210,199,174),size='font',center=True)
 
     def puzzle_route(self, game):
         puzzle = game.puzzle

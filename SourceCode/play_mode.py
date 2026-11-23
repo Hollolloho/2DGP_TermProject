@@ -5,6 +5,7 @@ import pico2d.pico2d as p
 from .maze_model import Game
 from .game_view import View, LW, LH, PUZZLE_OFFSET_X
 from .game_audio import Audio
+from .puzzle_layout import tab_at, connection_cell, connection_piece_at, contains, CONNECTION_SHELF
 
 
 class PlayMode:
@@ -26,7 +27,8 @@ class PlayMode:
 
     def release_input(self):
         self.held.clear()
-        self.game.puzzle.release()
+        self.game.cancel_puzzle_drag()
+        self.view.connection_pointer = None
         self.puzzle_mouse_held = False
         self.game.boulder_return_requested = self.game.boulder_exit_requested = False
 
@@ -43,6 +45,9 @@ class PlayMode:
                 if event.key.repeat:
                     continue
                 key = event.key.keysym.sym
+                if key == p.SDLK_r and self.game.state == 'puzzle' and self.game.puzzle_tab == 'connection':
+                    self.game.rotate_connection()
+                    continue
                 # 변형과 퍼즐 중 이동 키를 보관하지 않는다.
                 if self.game.state in ('shifting', 'puzzle') and key not in (p.SDLK_r, p.SDLK_ESCAPE, p.SDLK_F10):
                     continue
@@ -78,19 +83,36 @@ class PlayMode:
             elif event.type == p.SDL_MOUSEBUTTONDOWN and event.button.button == p.SDL_BUTTON_LEFT:
                 if self.game.state == 'puzzle':
                     if not self.puzzle_mouse_held:
-                        self.game.puzzle.press(self.mouse_point(event.button))
+                        point = self.mouse_point(event.button)
+                        tab = tab_at(point)
+                        if tab is not None:
+                            self.game.switch_puzzle_tab(tab)
+                        elif self.game.puzzle_tab == 'connection':
+                            self.view.connection_pointer = point
+                            index = connection_piece_at(self.game.connection,point)
+                            if index is not None:
+                                self.game.connection.pick(index)
+                        else:
+                            self.game.puzzle.press(point)
                     self.puzzle_mouse_held = True
                 elif not self.puzzle_mouse_held:
                     self.game.attack()
             elif event.type == p.SDL_MOUSEBUTTONUP and event.button.button == p.SDL_BUTTON_LEFT:
+                if self.game.state == 'puzzle' and self.game.puzzle_tab == 'connection' and self.puzzle_mouse_held:
+                    point = self.mouse_point(event.button)
+                    self.game.drop_connection(connection_cell(point),shelf=contains(CONNECTION_SHELF,point))
                 self.game.puzzle.release()
                 self.puzzle_mouse_held = False
             elif event.type == p.SDL_MOUSEMOTION:
                 if not event.motion.state & p.SDL_BUTTON_LMASK:
-                    self.game.puzzle.release()
+                    self.game.cancel_puzzle_drag()
                     self.puzzle_mouse_held = False
                 elif self.game.state == 'puzzle':
-                    self.game.drag_puzzle(self.mouse_point(event.motion))
+                    point = self.mouse_point(event.motion)
+                    if self.game.puzzle_tab == 'connection':
+                        self.view.connection_pointer = point
+                    else:
+                        self.game.drag_puzzle(point)
 
         if not self.smoke and not p.SDL_GetWindowFlags(p.window) & p.SDL_WINDOW_INPUT_FOCUS:
             self.release_input()
