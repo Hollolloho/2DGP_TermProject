@@ -90,18 +90,22 @@ class PathConnection:
 
     def is_connected(self):
         """입구부터 서로 마주보는 포트만 따라간다. 연결 조회 자체는 상태를 바꾸지 않는다."""
+        return bool(self.route())
+
+    def route(self):
+        """유효한 입구~출구 경로의 셀을 순서대로 반환한다. 불완전하면 빈 튜플이다."""
         board = {piece.cell:piece for piece in self.pieces if piece.cell is not None}
         cell,incoming = ENTRY
-        visited = set()
-        while cell not in visited:
-            visited.add(cell)
+        route = []
+        while cell not in route:
+            route.append(cell)
             piece = board.get(cell)
             if piece is None or incoming not in piece.ports:
-                return False
+                return ()
             if cell == EXIT[0] and EXIT[1] in piece.ports:
-                return True
+                return tuple(route)
             outgoing = next(port for port in piece.ports if port != incoming)
             dx,dy = DIRECTIONS[outgoing]
             cell = cell[0]+dx,cell[1]+dy
             incoming = (outgoing+2)%4
-        return False
+        return ()
