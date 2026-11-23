@@ -83,6 +83,7 @@ def run():
             assert all(game.can_stand(x+.5,y+.5,grid) for x,y in (game.path_entry,game.path_exit))
             assert game.maze_layouts.is_valid(grid)
     game,saved = opened(game)
+    assert not game.return_from_path(completed=True) and game.state == 'path_room'
     for _ in range(50):game.update(.02,1,0)
     assert game.player.x < -.2 and not game.path_completed
     game.move_straight(20,1)
@@ -94,6 +95,7 @@ def run():
     assert game.connection.pieces[0].cell == (0,1) and game.connection.pieces[0].rotation == rotation
     game,saved = opened(game)
     solve(game)
+    assert not game.return_from_path(completed=True) and not game.path_completed
     game.player.x,game.player.y = 1.5,1.5
     game.move_straight(1,1)
     assert game.player.x < 1.8 and game.player.y < 1.8, 'cut an unsupported inside corner'

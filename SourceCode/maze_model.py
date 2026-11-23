@@ -767,6 +767,10 @@ class Game:
     def return_from_path(self, completed=False):
         if self.state != 'path_room':
             return False
+        if completed and (self.world_path.stage != 'active' or not self.connection.completed
+                          or self.world_path.endpoint(self.player.x,self.player.y)
+                          != ('entry' if self.world_path.reverse else 'exit')):
+            return False
         target = self.path_entry if self.world_path.reverse else self.path_exit
         self._restore_path()
         self.leave_path()

@@ -39,12 +39,23 @@ def run(app):
         press(app,p.SDLK_f)
         assert game.state == 'path_room' and game.world_path.stage == 'entering'
         assert not app.held
-        with patch.object(app.view,'path_door',wraps=app.view.path_door) as doors:
-            picture(app)
+        visible = game.visible
+        game.visible = visible | {game.path_exit}
+        try:
+            with (patch.object(app.view,'path_door',wraps=app.view.path_door) as doors,
+                  patch.object(app.view,'atlas',wraps=app.view.atlas) as atlas):
+                picture(app)
+        finally:
+            game.visible = visible
         cell = game.path_exit if game.world_path.reverse else game.path_entry
         x,y,facing = app.view.shortcut_mount(game,cell)
         sx,sy = app.view.world(x,y)
         assert any(call.args[:3] == (sx,sy,facing) and call.args[3] for call in doors.call_args_list), 'entering doorway stayed closed'
+        assert any(call.args[:4] == (sx,sy,'shortcuts',f'puzzle_open_{facing}') for call in atlas.call_args_list)
+        if not game.path_completed:
+            x,y,other_facing = app.view.shortcut_mount(game,game.path_exit)
+            ox,oy = app.view.world(x,y)
+            assert any(call.args[:4] == (ox,oy,'shortcuts',f'puzzle_closed_{other_facing}') for call in atlas.call_args_list)
         press(app,p.SDLK_r)
         press(app,p.SDLK_s)
         assert app.game is game and not app.held
@@ -53,7 +64,7 @@ def run(app):
             picture(app)
             if capture and index in (7,23,39):
                 pixels(app)
-                app.view.capture(app.output/f'entry-{index+1:02}.png')
+                app.view.capture(app.output/f'entry-open-{index+1:02}.png')
         assert game.world_path.stage == 'active' and game.can_stand(game.player.x,game.player.y)
         assert game.path_return == saved
     def walk_to(target,capture=None):
