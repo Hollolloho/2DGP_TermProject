@@ -5,8 +5,10 @@ from SourceCode.path_connection import N, E, S, W
 from .checks_phase_changes import finish_shift
 from .check_waypoint_maze import SOLUTION_CORNERS
 
-SOLUTION = ((0,(0,1),(W,E)),(1,(1,1),(W,E)),(3,(2,1),(W,S)),
-            (4,(2,2),(N,E)),(2,(3,2),(W,E)))
+from .runed_path_fixtures import ROUTES,placement
+from SourceCode.world_path_room import TRAVERSE_CELLS
+
+SOLUTION = placement(ROUTES[0])
 
 
 def opened(game=None):
@@ -55,10 +57,13 @@ def walk(game, target):
 
 def check_placements():
     maximum = 0
+    decisions = []
+    worst = 999
     for seed in (*range(32),117):
         for run_number in range(3):
             game = Game(seed,run_number)
             assert game.path_entry is not None and game.path_exit is not None,(seed,run_number)
+            spawn_gains = []
             for base in game.maze_layouts.grids:
                 for opened_gate in (False,True):
                     grid = [row[:] for row in base]
@@ -66,13 +71,56 @@ def check_placements():
                     assert game.maze_layouts.is_valid(grid),(seed,run_number)
                     spawn,goal,guard = (distances(grid,cell) for cell in (game.spawn,game.exit,game.guard_home))
                     assert all(guard[cell] >= 4 for cell in (game.path_entry,game.path_exit))
-                    assert spawn[game.path_entry]+goal[game.path_exit]+10 < goal[game.spawn]
+                    gain = goal[game.spawn]-spawn[game.path_entry]-goal[game.path_exit]-TRAVERSE_CELLS
+                    spawn_gains.append(gain)
+                    assert goal[game.path_entry] > goal[game.path_exit]+TRAVERSE_CELLS
+                    assert goal[game.path_exit] >= 8
                     maximum = max(maximum,spawn[game.path_entry])
-    print(f'PASS: 99 maps / 594 layouts provide a safe, beneficial room; guard gap >=4; entry distance <= {maximum} cells including fallback.')
+            worst = min(worst,*spawn_gains)
+            if min(spawn_gains) <= 0:decisions.append((seed,run_number,min(spawn_gains),max(spawn_gains)))
+    print(f'PASS: 99 maps/594 layouts keep all doors, guard gap >=4 and >=8 cells remaining; 16-cell room cost. Entry-choice exceptions {decisions}; worst signed spawn gain {worst}; entry distance <= {maximum}.')
+
+
+def check_port_walking():
+    schedules = ((.02,)*20,(.05,)*8,(.01,.04,.03,.02)*4)
+    closed = opened_edges = 0
+    for route in ROUTES:
+        game,_ = opened()
+        for item in placement(route):put(game,item)
+        for left,top,right,bottom in game.world_path.barriers:
+            mx,my = (left+right)/2,(top+bottom)/2
+            assert not game.can_stand(mx,my)
+            nx,ny = (1,0) if left == right else (0,1)
+            for sign in (-1,1):
+                start = mx-sign*nx*.5,my-sign*ny*.5
+                dx,dy = sign*nx,sign*ny
+                for tangent in (0.,.2):
+                    game.player.x,game.player.y = start
+                    game.move_straight(dx*20+ny*tangent,dy*20+nx*tangent)
+                    assert game.can_stand(game.player.x,game.player.y)
+                    assert (game.player.x-start[0])*dx+(game.player.y-start[1])*dy <= .290001
+                for schedule in schedules:
+                    game.player.x,game.player.y = start
+                    game.phase_time = 0.  # 각 경계는 독립 충돌 사례다.
+                    for dt in schedule:game.update(dt,dx,dy)
+                    assert game.state == 'path_room' and game.can_stand(game.player.x,game.player.y)
+                    distance = (game.player.x-start[0])*dx+(game.player.y-start[1])*dy
+                    assert 0 < distance <= .290001
+                    closed += 1
+        for a,b in zip(route,route[1:]):
+            for a,b in ((a,b),(b,a)):
+                for schedule in schedules:
+                    game.player.x,game.player.y = a[0]+.5,a[1]+.5
+                    game.phase_time = 0.
+                    for dt in schedule:game.update(dt,b[0]-a[0],b[1]-a[1])
+                    assert abs(game.player.x-b[0]-.5) < 1e-6 and abs(game.player.y-b[1]-.5) < 1e-6
+                    opened_edges += 1
+    print(f'PASS: all 5 routes, {closed} closed-side and {opened_edges} open-side walks at fixed/variable dt; both directions, long and diagonal sweeps cannot cross closed ports.')
 
 
 def run():
     check_placements()
+    check_port_walking()
     game = Game(117)
     assert (game.path_entry,game.path_exit) == ((8,1),(19,9))
     assert distances(game.grid,game.spawn)[game.path_entry] == 2
@@ -101,7 +149,7 @@ def run():
     game.move_straight(1,1)
     assert game.player.x < 1.8 and game.player.y < 1.8, 'cut an unsupported inside corner'
     game.player.x,game.player.y = -2.3,1.5
-    for point in ((-.5,1.5),(.5,1.5),(1.5,1.5),(2.5,1.5),(2.5,2.5),(3.5,2.5),(4.5,2.5)):
+    for point in ((-.5,1.5),*((x+.5,y+.5) for x,y in ROUTES[0]),(4.5,2.5)):
         walk(game,point)
         assert game.state == 'path_room' and not game.path_completed
     walk(game,(5.6,2.5))
@@ -114,7 +162,7 @@ def run():
     game.interact()
     for _ in range(21):game.update(.05)
     assert game.world_path.reverse
-    for point in ((4.5,2.5),(3.5,2.5),(2.5,2.5),(2.5,1.5),(.5,1.5),(-1.5,1.5),(-2.8,1.5)):
+    for point in ((4.5,2.5),*((x+.5,y+.5) for x,y in reversed(ROUTES[0])),(-.5,1.5),(-1.5,1.5),(-2.8,1.5)):
         walk(game,point)
     assert game.state == 'explore' and (game.player.x,game.player.y) == (8.5,1.5)
 

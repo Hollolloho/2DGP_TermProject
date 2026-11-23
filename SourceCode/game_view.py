@@ -11,7 +11,7 @@ from .maze_model import PHASE_SECONDS, SHIFT_SECONDS, SHIFT_SWAP_AT
 from .maze_model import ATTACK_FORWARD, DEFAULT_ATTACK_HIT_MS, HALF_TILE_W, HALF_TILE_H, project
 from .trap_view import Corridor, VERTEX
 from .mouse_maze import BOARD, MAZE, WAYPOINTS, GOAL_CELL, cell_center, cell_rect
-from .path_connection import DIRECTIONS as CONNECTION_DIRECTIONS
+from .path_connection import DIRECTIONS as CONNECTION_DIRECTIONS, RUNES
 from .puzzle_layout import ROOM_ORIGIN, ROOM_SCALE, room_point, connection_cell, on_loose_floor
 from .world_path_room import FIXED_FLOOR, LOOSE_POSITIONS, ENTER_SECONDS
 
@@ -867,6 +867,25 @@ class View:
         if selected:
             self.room_outline((cx-.5,cy-.5),(253,220,141),lift)
 
+    def room_rune(self, index, x, y, reached):
+        background = (18,23,24)
+        color = ((250,209,116),(144,218,240))[index] if reached else ((197,155,89),(110,165,190))[index]
+        self.rectangle(x-9,y-8,18,16,(*background,255))
+        self.rectangle(x-9,y-8,18,1,(151,210,157) if reached else (80,87,80))
+        if index == 0:
+            for dx,dy in ((-1,-1),(0,-1),(1,-1),(-1,0),(1,0),(-1,1),(0,1),(1,1)):
+                self.line(x+dx*4,y+dy*4,x+dx*6,y+dy*6,color)
+            for dy in range(-2,3):
+                half = 3-abs(dy)
+                self.line(x-half,y+dy,x+half,y+dy,color)
+        else:
+            for dy in range(-5,6):
+                half = math.sqrt(25-dy*dy)
+                self.line(x-half,y+dy,x+half,y+dy,color)
+            for dy in range(-4,5):
+                half = math.sqrt(16-dy*dy)
+                self.line(x+3-half,y-1+dy,x+3+half,y-1+dy,background)
+
     def path_room_scene(self, game):
         self.clear((0,0,0,255))
         self.origin,self.world_scale = ROOM_ORIGIN,ROOM_SCALE
@@ -883,17 +902,26 @@ class View:
             if puzzle.held == index:continue
             center = (piece.cell[0]+.5,piece.cell[1]+.5) if piece.cell is not None else LOOSE_POSITIONS[index]
             self.room_piece(index,piece,center,puzzle.completed,puzzle.selected == index)
+        for left,top,right,bottom in game.world_path.barriers:
+            ax,ay = self.world(left,top)
+            bx,by = self.world(right,bottom)
+            self.line(ax,ay+1,bx,by+1,(47,41,32))
+            self.line(ax,ay-2,bx,by-2,(100,91,70))
+            self.line(ax,ay-4,bx,by-4,(174,161,126))
+            self.line(ax,ay+1,ax,ay-4,(100,91,70))
+            self.line(bx,by+1,bx,by-4,(100,91,70))
         scene = [(-1.5,self.atlas,(*self.world(-3,1.5),'shortcuts','trap_entry_east',(172,180,151))),
                  (8.5,self.atlas,(*self.world(6,2.5),'shortcuts','trap_arrival_west',(160,197,166))),
                  (game.player.x+game.player.y,self.player,(*self.world(game.player.x,game.player.y),game))]
         for _,draw,args in sorted(scene,key=lambda item:item[0]):draw(*args)
         ex,ey = self.world(-3,1.5)
         ox,oy = self.world(5.7,2.5)
-        self.text('출구' if reverse else '입구 · 후퇴',ex,ey+18,
+        self.text('출구' if reverse else '입구 · 후퇴',ex,ey-84,
                   (161,215,177) if reverse else (207,194,155),size='font',center=True)
-        self.text('입구 · 후퇴' if reverse else '출구',ox,oy+18,
+        self.text('입구 · 후퇴' if reverse else '출구',ox+30,oy+18,
                   (207,194,155) if reverse else (161,215,177),size='font',center=True)
         self.text('끊긴 길의 방',320,56,(226,211,172),size='hud_font',center=True)
+        self.text('입구 → 두 문양 모두 → 출구 · 문양 순서는 자유',320,319,(189,194,175),size='font',center=True)
         status = '석판을 끌어 빈틈에 놓기 · R 회전'
         point = self.connection_pointer
         if puzzle.dragging and point is not None:
@@ -906,6 +934,18 @@ class View:
             self.room_piece(puzzle.held,puzzle.pieces[puzzle.held],room_point(point),False,True,8)
         elif puzzle.completed:
             status = 'WASD로 완성된 길을 걸어 맞은편 문까지'
+        elif puzzle.exit_connected:
+            status = '출구까지 닿았지만 문양이 빠졌습니다 · 두 문양을 지나 연결'
+        elif len(puzzle.reached_runes) == len(RUNES):
+            status = '두 문양 연결됨 · 길을 출구까지 이어 주세요'
+        for index,cell in enumerate(RUNES):
+            reached = cell in puzzle.reached_runes
+            sx,sy = self.world(cell[0]+.5,cell[1]+.5)
+            self.room_rune(index,sx,sy-11,reached)
+            x = 215+index*150
+            self.room_rune(index,x,337,reached)
+            self.text(('태양' if index == 0 else '초승달')+(' · 연결됨' if reached else ' · 미연결'),
+                      x+15,337,(174,222,180) if reached else (185,187,170),size='font')
         self.text(status,350,364,(231,211,167),size='font',center=True)
         self.text('Esc 들어온 문으로 후퇴 · 맞은편 문을 지나 통과',350,383,(177,180,160),center=True)
 
