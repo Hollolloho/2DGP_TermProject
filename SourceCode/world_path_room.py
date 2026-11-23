@@ -2,6 +2,8 @@
 from .path_connection import PathConnection
 
 ENTER_SECONDS = 1.0
+# 바닥 12.85칸 + 진입 1초(보행 2.5칸 상당)를 올림한 보수적 숏컷 비용.
+TRAVERSE_CELLS = 16
 START = (-2.3,1.5)
 REVERSE_START = (5.2,2.5)
 LOOSE_POSITIONS = ((-2.5,-.5),(-1.5,-.5),(-1.5,.5),(-2.5,2.5),(-1.5,2.5),
