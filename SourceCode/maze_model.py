@@ -5,7 +5,7 @@ import math
 import random
 from transitions import Machine
 from .mouse_maze import MouseMaze
-from .path_connection import PathConnection
+from .world_path_room import WorldPathRoom, ENTER_SECONDS, START, REVERSE_START
 
 COLS, ROWS = 31, 23
 # 쿼터뷰 지면의 반쪽 타일 크기. 렌더링과 이동 속도 계산이 같은 투영을 사용한다.
@@ -275,7 +275,14 @@ class Game:
             self.maze_layouts.landmarks.update(boulder_entry=self.boulder_entry, boulder_exit=self.boulder_exit)
             self.maze_layouts.protected_cells.update(landmark_area((self.boulder_entry, self.boulder_exit)))
         self.puzzle = MouseMaze()
-        self.connection = PathConnection()
+        self.path_entry,self.path_exit = self.choose_world_path() or (None,None)
+        if self.path_entry is not None:
+            self.maze_layouts.landmarks.update(path_entry=self.path_entry,path_exit=self.path_exit)
+            self.maze_layouts.protected_cells.update(landmark_area((self.path_entry,self.path_exit)))
+        self.world_path = WorldPathRoom()
+        self.connection = self.world_path.puzzle
+        self.path_completed = self.path_discovered = False
+        self.path_return = None
         self.puzzle_tab = 'maze'
         self.puzzle_reserved_phase = None
         self.puzzle_open = False
@@ -320,11 +327,13 @@ class Game:
         self.trap_return_direction = self.player.direction
         self.trap_velocity = self.trap_side_velocity = self.trap_stride = 0.0
         self.trap_hit_at = -10.0
-        self.machine = Machine(model=self, states=['explore', 'puzzle', 'trap', 'shifting', 'clear', 'failed'],
+        self.machine = Machine(model=self, states=['explore', 'puzzle', 'trap', 'path_room', 'shifting', 'clear', 'failed'],
             initial='explore', auto_transitions=False,
             transitions=[['enter_room', 'explore', 'trap'], ['leave_room', 'trap', 'explore'],
                          ['escape', 'explore', 'clear'], ['fail', ['explore', 'trap'], 'failed'],
                          ['enter_puzzle', 'explore', 'puzzle'], ['leave_puzzle', 'puzzle', 'explore'],
+                         ['enter_path', 'explore', 'path_room'], ['leave_path', 'path_room', 'explore'],
+                         {'trigger':'fail','source':'path_room','dest':'failed','before':'_restore_path'},
                          ['begin_transform', 'explore', 'shifting'],
                          ['finish_transform', 'shifting', 'explore']])
         self.player_machine = Machine(model=self.player, states=['idle', 'walk', 'sprint', 'attack'],
@@ -378,6 +387,43 @@ class Game:
                 if any(guard[cell] < 4 for cell in (entry, arrival)):
                     return False
         return True
+
+    def choose_world_path(self):
+        """여섯 지형 조건에서 안전·왕복 착지·실제 보행 이득을 보장하는 후보만 고른다."""
+        layouts = self.maze_layouts
+        base = layouts.grids[0]
+        ds,de = distances(base,self.spawn),distances(base,self.exit)
+        landmarks = set(layouts.landmarks.values()) | set(self.puzzle_gate or ())
+        if self.torch_wall is not None:
+            landmarks.add(self.torch_wall)
+        fields = []
+        for original in layouts.grids:
+            for opened in (False,True):
+                grid = [row[:] for row in original]
+                if self.puzzle_gate:
+                    x,y = self.puzzle_gate[0];grid[y][x] = int(not opened)
+                fields.append((distances(grid,self.spawn),distances(grid,self.exit),distances(grid,self.guard_home)))
+        def usable(cell):
+            area = landmark_area((cell,))
+            return (all(math.dist(cell,other) > 1.5 for other in landmarks)
+                    and all(0 <= x < COLS and 0 <= y < ROWS
+                            and all(grid[y][x] == base[y][x] for grid in layouts.grids) for x,y in area)
+                    and any(base[cell[1]+dy][cell[0]+dx] for dx,dy in ((0,-1),(-1,0)))
+                    and all(guard.get(cell,0) >= 4 for _,_,guard in fields))
+        entries = sorted((cell for cell,distance in ds.items() if 2 <= distance <= 18 and usable(cell)),
+                         key=lambda cell:(ds[cell],cell))
+        arrivals = sorted((cell for cell,distance in de.items() if 8 <= distance <= 24 and usable(cell)),
+                          key=lambda cell:(ds[cell]+de[cell] != ds[self.exit],abs(de[cell]-18),cell))
+        for limit in (8,12,18):
+            for entry in entries:
+                if ds[entry] > limit:continue
+                for arrival in arrivals:
+                    if math.dist(entry,arrival) < 4:continue
+                    # 보드와 두 문턱을 걷는 약 10칸까지 포함해 매 지형에서 더 짧아야 한다.
+                    if all(goal[arrival] >= 8 and spawn[entry]+goal[arrival]+10 < goal[self.spawn]
+                           for spawn,goal,_ in fields):
+                        return entry,arrival
+        return None
 
     def choose_puzzle_gate(self):
         layouts = self.maze_layouts
@@ -436,7 +482,7 @@ class Game:
         self.connection.cancel()
 
     def switch_puzzle_tab(self, tab):
-        if self.state != 'puzzle' or tab not in ('maze','connection'):
+        if self.state != 'puzzle' or tab != 'maze':
             return False
         self.cancel_puzzle_drag()
         self.puzzle_tab = tab
@@ -448,23 +494,24 @@ class Game:
         return self._complete_puzzle()
 
     def rotate_connection(self):
-        if self.state != 'puzzle' or self.puzzle_tab != 'connection':
+        if self.state != 'path_room' or self.world_path.stage != 'active':
             return False
-        self.connection.rotate()
-        return self.connection.completed and self._complete_puzzle()
+        return self.connection.rotate()
 
     def drop_connection(self, cell=None, *, shelf=False):
-        if self.state != 'puzzle' or self.puzzle_tab != 'connection':
+        if self.state != 'path_room' or self.world_path.stage != 'active':
             return False
-        self.connection.drop(cell,shelf=shelf)
-        return self.connection.completed and self._complete_puzzle()
+        return self.connection.drop(cell,shelf=shelf)
+
+    def pick_connection(self, index):
+        return (self.state == 'path_room' and self.world_path.stage == 'active'
+                and self.connection.pick(index))
 
     def _complete_puzzle(self):
         if self.state != 'puzzle' or self.puzzle_reserved_phase is not None or self.puzzle_open:
             return False
         self.puzzle_reserved_phase = self.next_phase
         self.puzzle.reset()
-        self.connection.reset()
         self.close_puzzle()
         self.message(f'퍼즐 완료 · 다음 {PHASES[self.next_phase]}에 통로가 열립니다', 5)
         return True
@@ -484,7 +531,35 @@ class Game:
         name = state+'-'+self.player.screen_facing
         return name if name in self.player_clips else state+'-'+DIAGONAL_FACINGS[self.player.direction]
 
+    def animate_movement(self, vx, vy, running=False, sprint_cost=0.):
+        if vx or vy:
+            # A screen-axis move ties two clips. Keep the current one if it fits.
+            alignment = [vx*x+vy*y for x, y in DIRECTIONS]
+            best = max(alignment)
+            if alignment[self.player.direction] < best:
+                self.player.direction = alignment.index(best)
+            sx, sy = project(vx, vy)
+            self.player.screen_facing = (('s' if sy > 1e-8 else 'n' if sy < -1e-8 else '')
+                                         + ('e' if sx > 1e-8 else 'w' if sx < -1e-8 else ''))
+            distance = math.hypot(sx, sy)
+            self.player.gait_distance += distance
+            clip = self.player_clips.get(self.locomotion_clip_name('run' if running else 'walk'), {})
+            cycle = clip.get('cycle_distance_px', RUN_CYCLE_PX if running else WALK_CYCLE_PX)
+            phase = (self.player.gait_phase + distance/cycle) % 1.
+            # dt 분할에 따른 부동소수점 오차가 주기 경계의 프레임을 바꾸지 않게 한다.
+            self.player.gait_phase = 0. if min(phase, 1.-phase) < 1e-10 else phase
+            if running:
+                self.player.stamina -= sprint_cost
+                self.player.sprint_now()
+            else:
+                self.player.walk_now()
+        elif self.player.state in ('walk', 'sprint') or self.attack_time >= ATTACK_COOLDOWN:
+            self.player.rest()
+
     def solid(self, x, y, grid=None):
+        if (grid is None and getattr(self,'state',None) == 'path_room'
+                and self.world_path.stage == 'active'):
+            return self.world_path.solid(x,y)
         grid = self.grid if grid is None else grid
         return not (0 <= x < COLS and 0 <= y < ROWS) or grid[y][x] == 1
 
@@ -545,9 +620,12 @@ class Game:
         """시간대 경계에서 함정방을 빠져나오고 변형 상태에 들어간다."""
         if self.state == 'trap':
             self.return_from_trap()
+        if self.state == 'path_room':
+            self.return_from_path()
         self.close_puzzle()
         self.puzzle.reset()
-        self.connection.reset()
+        if not self.path_completed:
+            self.world_path.reset()
         self.puzzle_tab = 'maze'
         self.guard_attack_at = None
         self.guard_seen_until = 0.
@@ -652,6 +730,80 @@ class Game:
             self.trap_discovered = True
         if self.boulder_entry in visible:
             self.boulder_discovered = True
+        if self.path_entry in visible:
+            self.path_discovered = True
+
+    def path_available(self):
+        return (self.state == 'explore' and not self.map_open and self.path_entry is not None
+                and (self.close_to(self.path_entry) or (self.path_completed and self.close_to(self.path_exit))))
+
+    def enter_path_room(self):
+        if not self.path_available():
+            return False
+        reverse = self.path_completed and self.close_to(self.path_exit)
+        cell = self.path_exit if reverse else self.path_entry
+        self.path_return = self.player.x,self.player.y
+        self.path_return_direction,self.path_return_facing = self.player.direction,self.player.screen_facing
+        step = next((step for step in ((0,-1),(-1,0),(1,0),(0,1))
+                     if self.solid(cell[0]+step[0],cell[1]+step[1])),(0,-1))
+        self.path_walk_target = cell[0]+.5+step[0]*.85,cell[1]+.5+step[1]*.85
+        self.world_path.start(reverse)
+        self.map_open = False
+        self.attack_facing = self.attack_clip = None
+        self.attack_hits_ms = ()
+        self.guard_attack_at = None
+        self.player.rest()
+        self.enter_path()
+        return True
+
+    def _restore_path(self):
+        self.connection.cancel()
+        self.world_path.stage = 'idle'
+        self.player.x,self.player.y = self.path_return
+        self.player.direction,self.player.screen_facing = self.path_return_direction,self.path_return_facing
+        self.player.rest()
+        self.update_visibility()
+
+    def return_from_path(self, completed=False):
+        if self.state != 'path_room':
+            return False
+        target = self.path_entry if self.world_path.reverse else self.path_exit
+        self._restore_path()
+        self.leave_path()
+        if completed:
+            self.path_completed = self.path_discovered = True
+            self.player.x,self.player.y = target[0]+.5,target[1]+.5
+            self.landing_cell,self.landing_until = target,self.time+10
+            self.message('길의 방 통과 · 이번 회차에 바로 왕복할 수 있습니다',5)
+        else:
+            self.message('길의 방 입구로 복귀 · 같은 시간대에는 배치가 유지됩니다')
+        self.update_visibility()
+        return True
+
+    def update_path_room(self, dt, dx, dy):
+        room = self.world_path
+        room.elapsed += dt
+        if room.stage == 'entering':
+            t = min(1.,room.elapsed/ENTER_SECONDS)
+            old = self.player.x,self.player.y
+            self.player.x,self.player.y = (self.path_return[0]+(self.path_walk_target[0]-self.path_return[0])*t,
+                                          self.path_return[1]+(self.path_walk_target[1]-self.path_return[1])*t)
+            self.animate_movement(self.player.x-old[0],self.player.y-old[1])
+            if t >= 1:
+                self.player.x,self.player.y = REVERSE_START if room.reverse else START
+                room.stage,room.elapsed = 'active',0.
+                self.player.rest()
+            return
+        vx = vy = 0.
+        magnitude = math.hypot(*project(dx,dy))
+        if magnitude and not self.connection.dragging:
+            vx,vy = self.move_straight(dx/magnitude*dt*WALK_SPEED,dy/magnitude*dt*WALK_SPEED)
+        self.animate_movement(vx,vy)
+        end = room.endpoint(self.player.x,self.player.y)
+        if end is not None:
+            forward = end == ('entry' if room.reverse else 'exit')
+            if not forward or self.connection.completed:
+                self.return_from_path(completed=forward)
 
     def _enter_trap(self, kind):
         self.trap_kind = kind
@@ -741,6 +893,8 @@ class Game:
             self.message(f'A 입구 → B 출구 · 일반 통로 {self.shortcut_distance}칸을 우회', 5)
         elif self.boulder_available():
             self.enter_boulder()
+        elif self.path_available():
+            self.enter_path_room()
         elif self.close_to(self.fountain):
             if self.fountain_used:
                 self.message('이미 사용한 샘물입니다')
@@ -869,6 +1023,8 @@ class Game:
 
     def take_guard_hit(self):
         was_puzzling = self.state == 'puzzle'
+        if self.state == 'path_room':
+            self.return_from_path()
         self.player.hp = max(0, self.player.hp-GUARD_DAMAGE)
         self.close_puzzle()
         self.map_open = False
@@ -881,6 +1037,9 @@ class Game:
         dt = min(.05, max(0, dt))
         self.ui_time += dt
         if self.state in ('clear', 'failed'):
+            return
+        if self.state == 'path_room' and self.player.hp <= 0:
+            self.fail()
             return
         if self.state == 'shifting':
             self.update_shift(dt)
@@ -900,6 +1059,9 @@ class Game:
         running = sprint and self.player.stamina >= sprint_cost
         if self.phase == 2:
             self.player.stamina = min(100, self.player.stamina+dt*8)
+        if self.state == 'path_room':
+            self.update_path_room(dt,dx,dy)
+            return
         if self.state == 'puzzle':
             self.update_guard(dt)
             return
@@ -943,29 +1105,7 @@ class Game:
         if magnitude:
             speed = RUN_SPEED if running else WALK_SPEED
             vx, vy = self.move_straight(dx/magnitude*dt*speed, dy/magnitude*dt*speed)
-        if vx or vy:
-            # A screen-axis move ties two clips. Keep the current one if it fits.
-            alignment = [vx*x+vy*y for x, y in DIRECTIONS]
-            best = max(alignment)
-            if alignment[self.player.direction] < best:
-                self.player.direction = alignment.index(best)
-            sx, sy = project(vx, vy)
-            self.player.screen_facing = (('s' if sy > 1e-8 else 'n' if sy < -1e-8 else '')
-                                         + ('e' if sx > 1e-8 else 'w' if sx < -1e-8 else ''))
-            distance = math.hypot(sx, sy)
-            self.player.gait_distance += distance
-            clip = self.player_clips.get(self.locomotion_clip_name('run' if running else 'walk'), {})
-            cycle = clip.get('cycle_distance_px', RUN_CYCLE_PX if running else WALK_CYCLE_PX)
-            phase = (self.player.gait_phase + distance/cycle) % 1.
-            # dt 분할에 따른 부동소수점 오차가 주기 경계의 프레임을 바꾸지 않게 한다.
-            self.player.gait_phase = 0. if min(phase, 1.-phase) < 1e-10 else phase
-            if running:
-                self.player.stamina -= sprint_cost
-                self.player.sprint_now()
-            else:
-                self.player.walk_now()
-        elif self.player.state in ('walk', 'sprint') or self.attack_time >= ATTACK_COOLDOWN:
-            self.player.rest()
+        self.animate_movement(vx,vy,running,sprint_cost)
         if self.attack_facing and not self.map_open:
             for hit_ms in self.attack_hits_ms:
                 if previous_attack_time < hit_ms/1000 <= self.attack_time:
