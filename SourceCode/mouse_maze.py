@@ -1,16 +1,21 @@
 """The first mouse puzzle and its logical screen coordinates."""
 import math
 
-BOARD = (66, 134, 34)
+BOARD = (66, 126, 22)
 MAZE = (
-    '#########',
-    '#S..#..G#',
-    '###.#.###',
-    '#.....###',
-    '#########',
+    '#############',
+    '#S..#..2...G#',
+    '###.#.###.#.#',
+    '#...........#',
+    '#.#.#.#.###.#',
+    '#1....#..3..#',
+    '#.#.###.###.#',
+    '#.#.###...#.#',
+    '#############',
 )
 START_CELL = (1, 1)
-GOAL_CELL = (7, 1)
+GOAL_CELL = (11, 1)
+WAYPOINTS = ((1,5),(7,1),(9,5))
 
 
 def cell_rect(x, y):
@@ -79,6 +84,17 @@ def can_preview(path, node):
     return is_passage(node) and (node not in path or (len(path) > 1 and node == path[-2]))
 
 
+def waypoint_state(path):
+    """현재 경로에 남은 번호가 정확히 1→2→3의 접두 순서인지 확인한다."""
+    progress = 0
+    for node in path:
+        if node in WAYPOINTS:
+            if progress >= len(WAYPOINTS) or node != WAYPOINTS[progress]:
+                return progress,True
+            progress += 1
+    return progress,False
+
+
 class MouseMaze:
     def __init__(self):
         self.reset()
@@ -98,6 +114,26 @@ class MouseMaze:
     def dragging(self):
         return self.pointer is not None
 
+    @property
+    def retained_path(self):
+        # 되짚는 커서가 마지막 노드에서 물러난 순간부터 그 노드는 금빛 경로에 없다.
+        if len(self.path) > 1 and self.preview_cell == self.path[-2]:
+            return self.path[:-1]
+        return self.path
+
+    @property
+    def progress(self):
+        return waypoint_state(self.retained_path)[0]
+
+    @property
+    def sequence_error(self):
+        return waypoint_state(self.retained_path)[1]
+
+    @property
+    def completed(self):
+        progress,error = waypoint_state(self.retained_path)
+        return self.retained_path[-1] == GOAL_CELL and progress == len(WAYPOINTS) and not error
+
     def release(self):
         self.pointer = None
 
@@ -115,7 +151,7 @@ class MouseMaze:
             return False
         self.hit_wall = False
         self.pointer = point
-        return self.cell == GOAL_CELL
+        return self.completed
 
     def _trace(self, point, cell):
         cells = crossed_cells(self.pointer, point, cell)

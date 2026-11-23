@@ -3,6 +3,7 @@ from SourceCode.maze_model import Game, PHASE_SECONDS, distances
 from SourceCode.mouse_maze import START_CELL, cell_center
 from SourceCode.path_connection import N, E, S, W
 from .checks_phase_changes import finish_shift
+from .check_waypoint_maze import SOLUTION_CORNERS
 
 SOLUTION = ((0,(0,1),(W,E)),(1,(1,1),(W,E)),(3,(2,1),(W,S)),
             (4,(2,2),(N,E)),(2,(3,2),(W,E)))
@@ -143,7 +144,7 @@ def run():
     game.player.x,game.player.y = near[0]+.5,near[1]+.5;game.update_visibility();game.interact()
     assert game.state == 'puzzle' and not game.switch_puzzle_tab('connection')
     game.puzzle.press(cell_center(*START_CELL))
-    for cell in ((3,1),(3,3),(5,3),(5,1),(7,1)):game.drag_puzzle(cell_center(*cell))
+    for cell in SOLUTION_CORNERS:game.drag_puzzle(cell_center(*cell))
     assert game.state == 'explore' and game.puzzle_reserved_phase == game.next_phase
     assert game.connection.pieces[0].cell == (0,1) and not game.path_completed
     print('PASS: early separate doorway, six safe layouts, continuous entry/retreat, no empty/diagonal shortcut; physical exit alone lands across immediately; reverse reuse and phase/failure/hit priority; old mouse-maze reservation retained.')
