@@ -53,7 +53,7 @@ def run(app):
         a,b = view.world(0,0),view.world(1,0)
         assert (b[0]-a[0],b[1]-a[1]) == (32,16)
         view.capture(app.output/'hud/01-explore.png')
-        game.player.x,game.player.y = 9.5,1.5
+        game.player.x,game.player.y = 9.5,4.9
         game.update_visibility()
         assert not any(text.startswith('F ') for text in labels(app)), 'F hint outside interaction range'
         press(app,p.SDLK_m)
