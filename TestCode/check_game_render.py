@@ -44,6 +44,8 @@ def run(app):
     check_boulder_render(app)
     from .check_game_hud import run as check_game_hud
     check_game_hud(app)
+    from .check_connection_render import run as check_connection_render
+    check_connection_render(app)
     output = app.output
     from math import ceil, hypot, isclose
 
