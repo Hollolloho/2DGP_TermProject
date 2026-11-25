@@ -59,9 +59,9 @@ def check_candidates():
                 # 같은 게임의 LOS 판정으로 초기 수호자 시야에 드는 경로 중심을 재측정한다.
                 game.grid = grid
                 game.player.x,game.player.y = game.guard_home[0]+.5,game.guard_home[1]+.5
-                exposed = sum(math.dist(cell,game.guard_home) <= GUARD_NOTICE_RADIUS and game.line_of_sight(*cell)
-                              for cell in option.path)
-                assert exposed == option.exposure_centres == (5,0)[index],(phase,p_open,index,exposed)
+                exposed = tuple(cell for cell in option.path
+                                if math.dist(cell,game.guard_home) <= GUARD_NOTICE_RADIUS and game.line_of_sight(*cell))
+                assert exposed == option.exposed_cells and len(exposed) == (5,0)[index],(phase,p_open,index,exposed)
     assert saved == tuple(tuple(tuple(row) for row in grid) for grid in game.maze_layouts.grids)
     assert all(not Game(seed,run).route_options for seed,run in ((118,0),(117,1),(117,2)))
     print('PASS: seed 117/run 0, all 6 phase/P-gate layouts: ordinary 16, exposure route 12/5 centres, cover route 14/0; selected gate walkable, other gate closed, ordinary exit retained, 20 cells remain and source layouts unchanged.')
