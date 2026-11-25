@@ -1,0 +1,42 @@
+"""두 숏컷 중 하나의 확정·다음 시간대 예약. 지형 조회는 상태를 바꾸지 않는다."""
+
+
+class ShortcutChoice:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.preview = self.selected = self.reserved_phase = None
+        self.opened = False
+
+    def select(self, index):
+        if self.selected is not None or type(index) is not int or index not in (0,1):
+            return False
+        self.preview = index
+        return True
+
+    def cancel(self):
+        if self.selected is not None:
+            return False
+        self.preview = None
+        return True
+
+    def confirm(self, next_phase):
+        if (self.selected is not None or self.preview is None
+                or type(next_phase) is not int or next_phase not in (0,1,2)):
+            return False
+        self.selected = self.preview
+        self.reserved_phase = next_phase
+        return True
+
+    def route_for_phase(self, phase):
+        if self.selected is not None and (self.opened or self.reserved_phase == phase):
+            return self.selected
+        return None
+
+    def apply_phase(self, phase):
+        if self.reserved_phase is None or self.reserved_phase != phase:
+            return False
+        self.opened = True
+        self.reserved_phase = None
+        return True
