@@ -168,6 +168,8 @@ def run(app):
             assert p.SDL_PushEvent(event)==1
             app.handle_events()
             assert not game.connection.dragging and not app.held
+            from .check_game_render import regain_focus
+            regain_focus(app)
             mouse(p.SDL_MOUSEBUTTONUP,(610,90))
             # 별도 오답 사례: 출구만 연결/문양 하나만 연결해도 바닥은 열리지 않는다.
             for index,piece in enumerate(game.connection.pieces):

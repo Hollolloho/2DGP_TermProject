@@ -5,7 +5,7 @@ import pico2d.pico2d as p
 from SourceCode.maze_model import Game,PHASE_SECONDS,shortest_path
 from SourceCode.shortcut_choice import CHOICE_START,CHOICE_GOAL
 from SourceCode.game_view import CHOICE_CARD_RECTS,CHOICE_CONFIRM_RECT
-from .check_game_render import inject_mouse
+from .check_game_render import inject_mouse, regain_focus
 from .check_boulder_render import keys,press,picture,pixels,labels
 
 
@@ -78,7 +78,7 @@ def run(app):
             before = game.phase_time;advance(.2)
             assert game.phase_time > before and game.state == 'puzzle'
             text = labels(app)
-            assert all(any(value in item for item in text) for value in ('노출길','엄폐길','12칸','14칸','기준 노출 5곳','기준 노출 0곳','다음 밤 개방','이 경로 확정'))
+            assert all(any(value in item for item in text) for value in ('1번 통로','2번 통로','12칸','14칸','기준 노출 0곳','다음 밤 개방','이 경로 확정'))
             assert saved == tuple((set(a),set(b)) for a,b in zip(game.observed_by_phase,game.visited_by_phase))
             frame = pixels(app)
             for x,y,w,h in CHOICE_CARD_RECTS:
@@ -121,6 +121,25 @@ def run(app):
             assert abs(game.player.x-before_cell[0]-.5)*abs(dx)+abs(game.player.y-before_cell[1]-.5)*abs(dy) <= .290001
             print(f'PASS: {width}x{height} SDL spawn/torch/WASD to U, two scaled route cards, click-only draft, separate queued confirm, next swap only, choice {index+1} real two-way walk, closed other gate and ordinary route; comparison does not reveal visited map.')
 
+        # A generated route with different endpoints must be reachable through
+        # the normal interaction and use its own mini-map and next-phase door.
+        app.game = game = Game(117,2,player_clips=app.view.player_catalog['clips'])
+        app.release_input()
+        game.guard_hp = 0
+        assert game.route_options and game.choice_start != CHOICE_START
+        walk(shortest_path(game.grid,game.spawn,game.choice_start))
+        open_panel(game)
+        assert game.route_options[0].label in labels(app)
+        click(center(CHOICE_CARD_RECTS[0]))
+        click(center(CHOICE_CONFIRM_RECT))
+        app.update(.02)
+        assert game.shortcut_choice.selected==0
+        game.phase_time=PHASE_SECONDS-.01
+        advance(.8)
+        walk(game.route_options[0].path)
+        walk(game.route_options[0].path[::-1])
+        print('PASS: generated seed 117/run 2 SDL route from spawn, cards, reservation and round trip.')
+
         # 같은 밤·U·초기 수호자로 두 길을 자동 보행한다. 중앙 칸 노출 수와 실시간 추적은 구분한다.
         for index in (0,1):
             game = fresh(True);game.guard_hp = 0;open_panel(game)
@@ -160,6 +179,7 @@ def run(app):
                 app.handle_events()
             app.update(.02)
             assert game.shortcut_choice.selected is None and not game.choice_confirm_requested
+            if cause == 'focus':regain_focus(app)
             if cause == 'phase':assert game.shortcut_choice.preview is None and game.state == 'shifting'
             else:assert game.shortcut_choice.preview == 1
             if cause == 'hit':assert game.player.hp == 85 and game.state == 'explore'
