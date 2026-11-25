@@ -14,6 +14,7 @@ from .mouse_maze import BOARD, MAZE, WAYPOINTS, GOAL_CELL, cell_center, cell_rec
 from .path_connection import DIRECTIONS as CONNECTION_DIRECTIONS, RUNES
 from .puzzle_layout import ROOM_ORIGIN, ROOM_SCALE, room_point, connection_cell, on_loose_floor
 from .world_path_room import FIXED_FLOOR, LOOSE_POSITIONS, ENTER_SECONDS
+from .shortcut_choice import CHOICE_START, CHOICE_GOAL
 
 LW, LH, SCALE = 640, 400, 2
 MAP_RECT = (0, 0, LW, LH)
@@ -22,6 +23,8 @@ VITALS_HUD_RECT = (15, 348, 138, 44)
 PUZZLE_OFFSET_X = 60
 BOULDER_SIGN_SCALE = .125
 BOULDER_SIGN_HEIGHT = 20
+CHOICE_CARD_RECTS = ((40,108,272,174),(328,108,272,174))
+CHOICE_CONFIRM_RECT = (220,292,200,28)
 WALL_NEIGHBORS = ((0, -1, 1), (1, 0, 2), (0, 1, 4), (-1, 0, 8))
 MEMORY_LIGHT = .32
 LIGHT_FADE_SECONDS = .20
@@ -458,6 +461,7 @@ class View:
 
         gate = game.puzzle_gate
         gate_cell = gate[0] if gate else None
+        choice_gates = {option.gate:(index,option) for index,option in enumerate(game.route_options)}
         for x, y in drawn_cells:
             sx, sy = self.world(x+.5, y+.5)
             if not (left-32 <= sx <= left+width+32 and top-16 <= sy <= top+height+80):
@@ -473,6 +477,13 @@ class View:
                 direction = facing[near[0]-x, near[1]-y]
                 state = 'open' if game.puzzle_open else 'closed'
                 place(self.atlas, x+.5, y+.5, 'shortcuts', f'puzzle_{state}_{direction}', tint)
+                continue
+            if (x,y) in choice_gates:
+                index,option = choice_gates[x,y]
+                before = option.path[option.path.index(option.gate)-1]
+                facing = {(0,1):'south',(1,0):'east',(0,-1):'north',(-1,0):'west'}[before[0]-x,before[1]-y]
+                state = 'open' if game.shortcut_choice.opened and game.shortcut_choice.selected == index else 'closed'
+                place(self.atlas,x+.5,y+.5,'shortcuts',f'puzzle_{state}_{facing}',tint)
                 continue
             if game.grid[y][x]:
                 mask = self.wall_mask(game, x, y)
@@ -499,6 +510,16 @@ class View:
                   self.tile_tint(game, x, y), game)
 
         markers = []
+        if game.route_options:
+            for label,cell in (('U',CHOICE_START),('V',CHOICE_GOAL)):
+                if cell in game.visible or game.reveal_all:
+                    sx,sy = self.world(cell[0]+.5,cell[1]+.5)
+                    markers.append((label,sx-12*self.world_scale,sy,(228,196,131)))
+            for index,option in enumerate(game.route_options):
+                if option.gate in game.visible or game.reveal_all:
+                    sx,sy = self.world(option.gate[0]+.5,option.gate[1]+.5)
+                    color = (148,211,177) if game.shortcut_choice.opened and game.shortcut_choice.selected == index else (215,181,122)
+                    markers.append((str(index+1),sx+14*self.world_scale,sy,color))
         if gate and (gate_cell in game.visible or game.reveal_all):
             color = (127,197,183) if game.puzzle_open else (218,175,107)
             for x, y in gate[1:]:
@@ -640,6 +661,8 @@ class View:
             return None if game.fountain_used else (game.fountain, 'F 샘물 회복')
         if game.close_to(game.exit):
             return game.exit, 'F 탈출'
+        if game.shortcut_available():
+            return CHOICE_START,'F 숏컷 비교'
         if game.puzzle_available():
             cell = next(cell for cell in game.puzzle_gate[1:] if game.close_to(cell,.75))
             return cell, 'F 퍼즐'
@@ -678,6 +701,13 @@ class View:
         if puzzle_status and game.state != 'puzzle' and not game.map_open:
             self.hud_panel((238,42,164,20))
             self.text(puzzle_status,320,52,(211,194,145),size='font',center=True)
+        choice = game.shortcut_choice
+        if choice.selected is not None and game.state != 'puzzle' and not game.map_open:
+            option = game.route_options[choice.selected]
+            status = f'{choice.selected+1} {option.label} · 개방됨' if choice.opened else f'{choice.selected+1} {option.label} · 다음 {PHASES[choice.reserved_phase]} 개방'
+            y = 76 if puzzle_status else 52
+            self.hud_panel((208,y-10,224,20))
+            self.text(status,320,y,(175,218,188),size='font',center=True)
 
         self.hud_vitals(game)
 
@@ -699,9 +729,47 @@ class View:
         if (game.time < game.banner_until and not warning and game.state == 'explore'
                 and not game.map_open and not game.banner.startswith('횃불에 접근해 F')
                 and not (puzzle_status and game.banner.startswith('퍼즐 완료'))):
-            top = 68 if puzzle_status else 52
+            top = (92 if puzzle_status else 68) if choice.selected is not None else 68 if puzzle_status else 52
             self.hud_panel((80,top,480,26))
             self.text(game.banner,320,top+13,(225,208,164),size='font',center=True)
+
+    def shortcut_overlay(self, game):
+        self.rectangle(0,37,LW,305,(0,0,0,175))
+        self.text('숏컷 경로 선택',320,61,(232,217,180),size='title',center=True)
+        self.text(f'U 출발 → V 합류 · 이번 판 하나만 · 다음 {PHASES[game.next_phase]} 개방 · 현재 16칸',320,88,size='font',center=True)
+        for index,(option,rect) in enumerate(zip(game.route_options,CHOICE_CARD_RECTS)):
+            x,y,w,h = rect
+            selected = game.shortcut_choice.preview == index
+            edge = (239,197,119) if selected else (103,109,97)
+            self.rectangle(x,y,w,h,edge)
+            self.rectangle(x+2,y+2,w-4,h-4,(24,29,29))
+            self.text(f'{index+1}  {option.label}'+(' · 선택됨' if selected else ''),x+14,y+18,
+                      edge if selected else (211,215,195),size='hud_font')
+            self.text(f'{option.distance}칸 · 기준 노출 {option.exposure_centres}곳',x+14,y+40,(223,217,193),size='font')
+            step,ox,oy = 11,x+70,y+73
+            grid = game.layout_for_phase(game.next_phase)
+            grid[option.gate[1]][option.gate[0]] = 0
+            for cy in range(6,13):
+                for cx in range(15,27):
+                    self.rectangle(ox+(cx-15)*step,oy+(cy-6)*step,step-1,step-1,
+                                   (49,54,49) if grid[cy][cx] else (93,98,82))
+            def point(cell):return ox+(cell[0]-15+.5)*step,oy+(cell[1]-6+.5)*step
+            for a,b in zip(option.path,option.path[1:]):
+                self.line(*point(a),*point(b),(231,195,126))
+            for cell in option.exposed_cells:
+                sx,sy = point(cell);self.rectangle(sx-2,sy-2,5,5,(225,108,86))
+            sx,sy = point(option.gate)
+            self.rectangle(sx-4,sy-4,9,9,(247,219,148))
+            self.rectangle(sx-2,sy-2,5,5,(41,46,41))
+            for label,cell in (('U',CHOICE_START),('V',CHOICE_GOAL)):
+                self.badge(label,*point(cell),(173,215,192))
+        x,y,w,h = CHOICE_CONFIRM_RECT
+        enabled = game.shortcut_choice.preview is not None
+        self.hud_panel((x,y,w,h))
+        self.text('이 경로 확정' if enabled else '먼저 후보를 클릭하세요',x+w/2,y+h/2,
+                  (245,211,143) if enabled else (136,144,132),size='hud_font',center=True)
+        self.text('카드 클릭은 임시 선택 · 확정 후 변경 불가 · Esc 닫기',320,334,center=True)
+        self.text('붉은 점: 초기 수호자 시야 기준 · 수호자가 이동하면 다른 길에서도 마주칠 수 있음',365,383,center=True)
 
     def puzzle_overlay(self, game):
         self.rectangle(0,37,LW,LH-37,(0,0,0,130))
@@ -1031,7 +1099,7 @@ class View:
         if game.map_open and game.state=='explore':
             self.map_overlay(game)
         if game.state == 'puzzle':
-            self.puzzle_overlay(game)
+            self.shortcut_overlay(game) if game.puzzle_tab == 'choice' else self.puzzle_overlay(game)
         if game.state=='clear':
             self.rectangle(0,0,LW,LH,(0,0,0,240))
             self.text('CLEAR',225,180,(226,213,171),size='big')
