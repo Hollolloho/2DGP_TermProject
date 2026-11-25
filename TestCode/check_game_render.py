@@ -49,6 +49,8 @@ def run(app):
     check_connection_render(app)
     from .check_waypoint_render import run as check_waypoint_render
     check_waypoint_render(app)
+    from .check_shortcut_render import run as check_shortcut_render
+    check_shortcut_render(app)
     output = app.output
     from math import ceil, hypot, isclose
 
