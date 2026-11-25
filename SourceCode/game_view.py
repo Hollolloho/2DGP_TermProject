@@ -14,7 +14,6 @@ from .mouse_maze import BOARD, MAZE, WAYPOINTS, GOAL_CELL, cell_center, cell_rec
 from .path_connection import DIRECTIONS as CONNECTION_DIRECTIONS, RUNES
 from .puzzle_layout import ROOM_ORIGIN, ROOM_SCALE, room_point, connection_cell, on_loose_floor
 from .world_path_room import FIXED_FLOOR, LOOSE_POSITIONS, ENTER_SECONDS
-from .shortcut_choice import CHOICE_START, CHOICE_GOAL
 
 LW, LH, SCALE = 640, 400, 2
 MAP_RECT = (0, 0, LW, LH)
@@ -456,8 +455,9 @@ class View:
             # 타일 중심이 가려져도 통로 쪽 동향 면은 보인다. 표지가 공중에 뜨지 않게 벽도 그린다.
             drawn_cells = drawn_cells | {sign_mount[2]}
 
-        def place(draw, x, y, *args):
-            scene.append((x+y, draw, (*self.world(x, y), *args)))
+        def place(draw, x, y, *args, depth=None, remembered=False):
+            scene.append(((not remembered, x+y if depth is None else depth),
+                          draw, (*self.world(x, y), *args)))
 
         gate = game.puzzle_gate
         gate_cell = gate[0] if gate else None
@@ -487,7 +487,9 @@ class View:
                 continue
             if game.grid[y][x]:
                 mask = self.wall_mask(game, x, y)
-                place(self.shifting_wall, x+.5, y+.5, f'wall_{mask}', tint, brightness, (x, y), game)
+                place(self.shifting_wall, x+.5, y+.5, f'wall_{mask}', tint, brightness, (x, y), game,
+                      remembered=not (game.reveal_all or (x, y) in game.visible
+                                      or (sign_visible and (x, y) == sign_mount[2])))
                 # Approximate overlap with the solid part of a foreground tile.
                 if in_exploration_view and abs(sx-player_x) < 34 and 0 < sy-player_y <= 48:
                     show_silhouette = True
@@ -511,7 +513,7 @@ class View:
 
         markers = []
         if game.route_options:
-            for label,cell in (('U',CHOICE_START),('V',CHOICE_GOAL)):
+            for label,cell in (('U',game.choice_start),('V',game.choice_goal)):
                 if cell in game.visible or game.reveal_all:
                     sx,sy = self.world(cell[0]+.5,cell[1]+.5)
                     markers.append((label,sx-12*self.world_scale,sy,(228,196,131)))
@@ -533,7 +535,7 @@ class View:
             if cell is None or (cell not in game.visible and not game.reveal_all):
                 continue
             x, y, facing = self.shortcut_mount(game, cell)
-            place(self.shortcut, x, y, facing, arrival, self.tile_tint(game, *cell))
+            place(self.shortcut, x, y, facing, arrival, self.tile_tint(game, *cell), depth=sum(cell)+1)
             if arrival and in_exploration_view:
                 arch_x, arch_y = self.world(x, y)
                 if abs(arch_x-player_x) < 40 and 0 < arch_y-player_y <= 48:
@@ -553,7 +555,7 @@ class View:
             x,y,facing = self.shortcut_mount(game,cell)
             entering = (game.state == 'path_room' and game.world_path.stage == 'entering'
                         and cell == (game.path_exit if game.world_path.reverse else game.path_entry))
-            place(self.path_door,x,y,facing,game.path_completed or entering,self.tile_tint(game,*cell))
+            place(self.path_door,x,y,facing,game.path_completed or entering,self.tile_tint(game,*cell), depth=sum(cell)+1)
             sx,sy = self.world(cell[0]+.5,cell[1]+.5)
             color = (151,210,174) if not arrival or game.path_completed else (173,167,142)
             markers.append(('L',sx+18*self.world_scale,sy,color))
@@ -563,7 +565,9 @@ class View:
             x, y = game.guard
             place(self.guardian, game.guard_x, game.guard_y, game, self.tile_tint(game, x, y))
         place(self.player, game.player.x, game.player.y, game)
-        # Sort all upright art together by its ground point, independent of sprite height.
+        # Remembered walls form the dim background of the currently visible scene.
+        # A mounted arch uses its floor cell depth so adjacent tiles of its backing
+        # wall cannot cover its frame. Visible foreground walls still sort after it.
         for _, draw, params in sorted(scene, key=lambda item: item[0]):
             draw(*params)
         # Keep the depth-sorted scene intact and reveal only the player's pose.
@@ -576,8 +580,8 @@ class View:
     def trap(self, game):
         if game.trap_kind == 'boulder':
             if self.boulder_scene is None:
-                from BoulderPractice.boulder_practice import View as BoulderView
-                self.boulder_scene = BoulderView(p, LW*SCALE, LH*SCALE, top=30*SCALE)
+                from .six_lane_view import SixLaneView
+                self.boulder_scene = SixLaneView(p, LW*SCALE, LH*SCALE, top=30*SCALE)
             self.boulder_scene.draw_scene(game.boulder_room)
         else:
             self.corridor.draw(game)
@@ -595,33 +599,33 @@ class View:
         self.text(route,537,14,(134,192,179))
 
     def hud_boulder(self, game):
-        from BoulderPractice.boulder_practice import LENGTH
+        from .six_lane_trap import CYCLE_SECONDS, LANE_COUNT, LENGTH
         room = game.boulder_room
-        self.hud_room_header(game, '돌 추격 통로', 'C 입구 → D 도착')
+        self.hud_room_header(game, '교차 경사 돌방', 'C → D')
         self.rectangle(0,348,640,52,(12,18,22,235))
-        if room.state == 'ready':
-            status = f'돌 출발까지 {max(0.,5.-room.time):.1f}초 · 지금 이동할 수 있습니다'
-        elif room.look_back:
-            status = '뒤를 확인하는 중 · W는 계속 전진'
+        lane = room.next_lane
+        if lane is None:
+            status = '여섯 구간 통과 · 정면 출구로 이동'
         else:
-            status = '장애물을 우회하고 측면 출구로 탈출하세요'
+            arrow = '왼쪽 → 오른쪽' if lane%2 == 0 else '오른쪽 → 왼쪽'
+            status = f'다음 {lane+1}/{LANE_COUNT} 구간 · {arrow}'
         self.text(status,16,361,(228,204,153),size='font')
-        self.text(f'뒤쪽 돌 {max(0.,room.gap):.1f} m',472,361,(227,158,111),size='font')
-        self.text('W/S 이동  A/D 장애물 우회  Shift 달리기  Q 뒤 확인  Esc 복귀',16,382,(202,199,179))
+        self.text(f'돌 주기 {CYCLE_SECONDS:.2f}초',472,361,(227,158,111),size='font')
+        self.text('시선 기준 W/S 전후  A/D 좌우  Shift 달리기  마우스 회전  Esc 복귀',16,382,(202,199,179))
         self.rectangle(0,397,640,3,(28,32,31))
         self.rectangle(0,397,640*min(1.,room.z/LENGTH),3,(179,151,94))
         if room.exit_nearby():
             self.rectangle(250,306,140,26,(13,17,18,220))
-            self.text('F  측면 출구 이용',265,319,(242,219,148),size='font')
+            self.text('F  정면 출구 이용',265,319,(242,219,148),size='font')
         if game.phase_warning:
             self.text('곧 미로 변형 · 입장 전 위치로 복귀',190,69,(239,183,104),size='font')
 
     def hud_trap(self, game):
-        self.hud_room_header(game, '칼날의 통로', 'A 입구 → B 출구')
+        self.hud_room_header(game, '칼날의 통로', 'A → B')
         self.rectangle(0,397,640,3,(28,32,31))
         self.rectangle(0,397,640*game.trap_progress,3,(179,151,94))
         self.rectangle(157,368,326,22,(13,17,18,210))
-        self.text('W/S 전진·후진   A/D 회피   Shift 달리기',173,380,(224,212,183))
+        self.text('마우스 좌우 회전   WASD 이동   Shift 달리기',173,380,(224,212,183))
         self.text(f'출구까지 {max(0,TRAP_LENGTH*(1-game.trap_progress)):.1f} m',535,379,(205,196,166))
         flash=max(0,1-(game.time-game.trap_hit_at)/.2)
         if flash:
@@ -662,7 +666,7 @@ class View:
         if game.close_to(game.exit):
             return game.exit, 'F 탈출'
         if game.shortcut_available():
-            return CHOICE_START,'F 숏컷 비교'
+            return game.choice_start,'F 숏컷 비교'
         if game.puzzle_available():
             cell = next(cell for cell in game.puzzle_gate[1:] if game.close_to(cell,.75))
             return cell, 'F 퍼즐'
@@ -688,6 +692,8 @@ class View:
         warning = game.phase_warning or game.state == 'shifting'
         phase = f'곧 {PHASES[game.next_phase]}' if game.phase_warning else PHASES[game.phase]
         title = '미로 변형 중' if game.state == 'shifting' else f'{phase} · {math.ceil(remaining):02d}초'
+        if game.test_course:
+            title = f'검수 코스 · {title}'
         self.hud_panel(PHASE_HUD_RECT)
         self.text(title,320,18,(239,187,108) if warning else (231,221,198),size='hud_font',center=True)
         self.rectangle(234,28,172,3,(40,39,33))
@@ -704,13 +710,12 @@ class View:
         choice = game.shortcut_choice
         if choice.selected is not None and game.state != 'puzzle' and not game.map_open:
             option = game.route_options[choice.selected]
-            status = f'{choice.selected+1} {option.label} · 개방됨' if choice.opened else f'{choice.selected+1} {option.label} · 다음 {PHASES[choice.reserved_phase]} 개방'
+            status = f'{option.label} · 개방됨' if choice.opened else f'{option.label} · 다음 {PHASES[choice.reserved_phase]} 개방'
             y = 76 if puzzle_status else 52
             self.hud_panel((208,y-10,224,20))
             self.text(status,320,y,(175,218,188),size='font',center=True)
 
         self.hud_vitals(game)
-
         if game.state == 'explore' and not game.map_open:
             self.hud_panel((548,366,76,22))
             self.text('M  지도',586,377,(222,210,181),size='font',center=True)
@@ -725,7 +730,7 @@ class View:
             self.hud_panel((x-88,y-11,176,36) if boulder else (x-56,y-11,112,22))
             self.text(label,x,y,(237,208,157),size='font',center=True)
             if boulder:
-                self.text('돌 접촉 즉사 · 5초 뒤 후방 추격',x,y+17,(224,213,188),center=True)
+                self.text('돌 접촉 즉사 · 여섯 경사 구간 중앙 횡단',x,y+17,(224,213,188),center=True)
         if (game.time < game.banner_until and not warning and game.state == 'explore'
                 and not game.map_open and not game.banner.startswith('횃불에 접근해 F')
                 and not (puzzle_status and game.banner.startswith('퍼즐 완료'))):
@@ -736,32 +741,39 @@ class View:
     def shortcut_overlay(self, game):
         self.rectangle(0,37,LW,305,(0,0,0,175))
         self.text('숏컷 경로 선택',320,61,(232,217,180),size='title',center=True)
-        self.text(f'U 출발 → V 합류 · 이번 판 하나만 · 다음 {PHASES[game.next_phase]} 개방 · 현재 16칸',320,88,size='font',center=True)
+        from .maze_model import distances
+        ordinary = distances(game.grid,game.choice_start)[game.choice_goal]
+        self.text(f'U 출발 → V 합류 · 이번 판 하나만 · 다음 {PHASES[game.next_phase]} 개방 · 현재 {ordinary}칸',320,88,size='font',center=True)
         for index,(option,rect) in enumerate(zip(game.route_options,CHOICE_CARD_RECTS)):
             x,y,w,h = rect
             selected = game.shortcut_choice.preview == index
             edge = (239,197,119) if selected else (103,109,97)
             self.rectangle(x,y,w,h,edge)
             self.rectangle(x+2,y+2,w-4,h-4,(24,29,29))
-            self.text(f'{index+1}  {option.label}'+(' · 선택됨' if selected else ''),x+14,y+18,
+            self.text(option.label+(' · 선택됨' if selected else ''),x+14,y+18,
                       edge if selected else (211,215,195),size='hud_font')
-            self.text(f'{option.distance}칸 · 기준 노출 {option.exposure_centres}곳',x+14,y+40,(223,217,193),size='font')
-            step,ox,oy = 11,x+70,y+73
             grid = game.layout_for_phase(game.next_phase)
             grid[option.gate[1]][option.gate[0]] = 0
-            for cy in range(6,13):
-                for cx in range(15,27):
-                    self.rectangle(ox+(cx-15)*step,oy+(cy-6)*step,step-1,step-1,
+            exposure = game.route_exposure(option.path,grid)
+            self.text(f'{option.distance}칸 · 기준 노출 {len(exposure)}곳',x+14,y+40,(223,217,193),size='font')
+            xs,ys = zip(*option.path)
+            left,top = max(0,min(xs)-1),max(0,min(ys)-1)
+            right,bottom = min(COLS,max(xs)+2),min(ROWS,max(ys)+2)
+            step = min(13, (w-24)/(right-left),72/(bottom-top))
+            ox,oy = x+(w-step*(right-left))/2,y+57
+            for cy in range(top,bottom):
+                for cx in range(left,right):
+                    self.rectangle(ox+(cx-left)*step,oy+(cy-top)*step,step-1,step-1,
                                    (49,54,49) if grid[cy][cx] else (93,98,82))
-            def point(cell):return ox+(cell[0]-15+.5)*step,oy+(cell[1]-6+.5)*step
+            def point(cell):return ox+(cell[0]-left+.5)*step,oy+(cell[1]-top+.5)*step
             for a,b in zip(option.path,option.path[1:]):
                 self.line(*point(a),*point(b),(231,195,126))
-            for cell in option.exposed_cells:
+            for cell in exposure:
                 sx,sy = point(cell);self.rectangle(sx-2,sy-2,5,5,(225,108,86))
             sx,sy = point(option.gate)
             self.rectangle(sx-4,sy-4,9,9,(247,219,148))
             self.rectangle(sx-2,sy-2,5,5,(41,46,41))
-            for label,cell in (('U',CHOICE_START),('V',CHOICE_GOAL)):
+            for label,cell in (('U',game.choice_start),('V',game.choice_goal)):
                 self.badge(label,*point(cell),(173,215,192))
         x,y,w,h = CHOICE_CONFIRM_RECT
         enabled = game.shortcut_choice.preview is not None
@@ -769,7 +781,7 @@ class View:
         self.text('이 경로 확정' if enabled else '먼저 후보를 클릭하세요',x+w/2,y+h/2,
                   (245,211,143) if enabled else (136,144,132),size='hud_font',center=True)
         self.text('카드 클릭은 임시 선택 · 확정 후 변경 불가 · Esc 닫기',320,334,center=True)
-        self.text('붉은 점: 초기 수호자 시야 기준 · 수호자가 이동하면 다른 길에서도 마주칠 수 있음',365,383,center=True)
+        self.text('붉은 점: 현재 수호자 위치·예정 지형 기준 · 수호자가 이동하면 다른 길에서도 마주칠 수 있음',365,383,center=True)
 
     def puzzle_overlay(self, game):
         self.rectangle(0,37,LW,LH-37,(0,0,0,130))
