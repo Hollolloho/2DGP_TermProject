@@ -6,6 +6,7 @@ import random
 from transitions import Machine
 from .mouse_maze import MouseMaze
 from .world_path_room import WorldPathRoom, ENTER_SECONDS, START, REVERSE_START, TRAVERSE_CELLS
+from .shortcut_choice import ShortcutChoice, ROUTE_OPTIONS, CHOICE_START, CHOICE_GOAL
 
 COLS, ROWS = 31, 23
 # 쿼터뷰 지면의 반쪽 타일 크기. 렌더링과 이동 속도 계산이 같은 투영을 사용한다.
@@ -280,6 +281,8 @@ class Game:
             self.maze_layouts.landmarks.update(path_entry=self.path_entry,path_exit=self.path_exit)
             self.maze_layouts.protected_cells.update(landmark_area((self.path_entry,self.path_exit)))
         self.world_path = WorldPathRoom()
+        self.route_options = self.choose_shortcut_routes()
+        self.shortcut_choice = ShortcutChoice()
         self.connection = self.world_path.puzzle
         self.path_completed = self.path_discovered = False
         self.path_return = None
@@ -341,6 +344,31 @@ class Game:
             transitions=[['rest', '*', 'idle'], ['walk_now', '*', 'walk'],
                          ['sprint_now', '*', 'sprint'], ['swing', '*', 'attack']])
         self.update_visibility()
+
+    def choose_shortcut_routes(self):
+        """기획에서 실측한 117 첫 회차의 두 길을 여섯 지형 조건에서 검증한다."""
+        if (self.seed,self.run_number) != (117,0):
+            return ()
+        protected = self.maze_layouts.protected_cells | set(self.puzzle_gate or ()) | {self.torch_wall}
+        if any(option.gate in protected for option in ROUTE_OPTIONS):
+            return ()
+        for base in self.maze_layouts.grids:
+            for p_open in (False,True):
+                original = [row[:] for row in base]
+                if self.puzzle_gate:
+                    x,y = self.puzzle_gate[0];original[y][x] = int(not p_open)
+                ordinary = distances(original,CHOICE_START).get(CHOICE_GOAL,0)
+                for option in ROUTE_OPTIONS:
+                    x,y = option.gate
+                    if not original[y][x]:return ()
+                    grid = [row[:] for row in original];grid[y][x] = 0
+                    if (any(grid[y][x] for x,y in option.path)
+                            or not self.maze_layouts.is_valid(grid)
+                            or not option.distance < ordinary
+                            or distances(grid,CHOICE_START).get(CHOICE_GOAL) != option.distance
+                            or distances(grid,self.exit).get(CHOICE_GOAL,0) < 8):
+                        return ()
+        return ROUTE_OPTIONS
 
     def choose_boulder_shortcut(self):
         """검증된 117 첫 회차 후보만 선택하고, 안전하지 않으면 생략한다."""
