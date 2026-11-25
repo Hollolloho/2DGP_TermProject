@@ -1,7 +1,10 @@
 """경로 선택의 임시 선택·확정·예약 경계. SDL 없이 실행한다."""
 from SourceCode.shortcut_choice import ShortcutChoice
 from SourceCode.shortcut_choice import CHOICE_START, CHOICE_GOAL
-from SourceCode.maze_model import Game, distances, GUARD_NOTICE_RADIUS
+from SourceCode.maze_model import Game, distances, shortest_path, GUARD_NOTICE_RADIUS, PHASE_SECONDS
+from SourceCode.mouse_maze import START_CELL,cell_center
+from .checks_phase_changes import finish_shift
+from .check_waypoint_maze import SOLUTION_CORNERS
 import math
 
 
@@ -67,8 +70,130 @@ def check_candidates():
     print('PASS: seed 117/run 0, all 6 phase/P-gate layouts: ordinary 16, exposure route 12/5 centres, cover route 14/0; selected gate walkable, other gate closed, ordinary exit retained, 20 cells remain and source layouts unchanged.')
 
 
+def opened(phase=0):
+    game = Game(117,0)
+    game.phase = game.layout_phase = phase
+    game.grid = game.layout_for_phase(phase)
+    game.observed,game.visited = game.observed_by_phase[phase],game.visited_by_phase[phase]
+    game.player.x,game.player.y = CHOICE_START[0]+.5,CHOICE_START[1]+.5
+    game.guard_hp = 0
+    game.update_visibility();game.interact()
+    assert game.state == 'puzzle' and game.puzzle_tab == 'choice'
+    return game
+
+
+def walk_cells(game, route):
+    game.player.x,game.player.y = route[0][0]+.5,route[0][1]+.5
+    for cell in route[1:]:
+        for _ in range(100):
+            dx,dy = cell[0]+.5-game.player.x,cell[1]+.5-game.player.y
+            if max(abs(dx),abs(dy)) < 1e-6:break
+            if abs(dx) > 1e-6:axis,distance = (1 if dx > 0 else -1,0),abs(dx)
+            else:axis,distance = (0,1 if dy > 0 else -1),abs(dy)
+            game.update(min(.02,distance/2.5),*axis)
+            assert game.state == 'explore'
+        else:raise AssertionError(('blocked walk',cell,game.player.x,game.player.y))
+        assert game.can_stand(game.player.x,game.player.y)
+
+
+def check_game_cycle():
+    for phase in range(3):
+        for index in (0,1):
+            game = opened(phase)
+            source = tuple(tuple(tuple(row) for row in grid) for grid in game.maze_layouts.grids)
+            selected,other = game.route_options[index],game.route_options[1-index]
+            assert not game._complete_puzzle() and game.puzzle_reserved_phase is None
+            assert game.select_shortcut(index)
+            game.close_puzzle();game.interact()
+            assert game.shortcut_choice.preview == index and game.puzzle_tab == 'choice'
+            assert game.request_shortcut_confirmation() and game.shortcut_choice.selected is None
+            game.update(.02)
+            assert game.state == 'explore' and game.shortcut_choice.selected == index
+            assert not game.shortcut_available() and not game.select_shortcut(1-index)
+            target = (phase+1)%3
+            assert game.shortcut_choice.reserved_phase == target and not game.shortcut_choice.opened
+            assert all(game.grid[o.gate[1]][o.gate[0]] for o in game.route_options)
+            assert game.layout_for_phase(target)[selected.gate[1]][selected.gate[0]] == 0
+            assert not game.shortcut_choice.opened
+            # 실제 P 풀이로 같은 전환에 두 예약을 만들며 서로의 기록을 덮지 않는다.
+            near = game.puzzle_gate[1]
+            game.player.x,game.player.y = near[0]+.5,near[1]+.5
+            game.update_visibility();game.interact()
+            assert game.state == 'puzzle' and game.puzzle_tab == 'maze'
+            game.puzzle.press(cell_center(*START_CELL))
+            for cell in SOLUTION_CORNERS:game.drag_puzzle(cell_center(*cell))
+            assert game.state == 'explore' and game.puzzle_reserved_phase == target
+            assert game.shortcut_choice.selected == index and game.shortcut_choice.reserved_phase == target
+            game.phase_time = PHASE_SECONDS-.01;game.update(.02)
+            assert game.state == 'shifting' and not game.shortcut_choice.opened
+            for _ in range(5):game.update(.05)
+            assert not game.shift_applied and game.grid[selected.gate[1]][selected.gate[0]] == 1
+            game.update(.05);game.update(.01)
+            assert game.shift_applied and game.shortcut_choice.opened
+            assert game.grid[selected.gate[1]][selected.gate[0]] == 0
+            assert game.grid[other.gate[1]][other.gate[0]] == 1
+            assert game.puzzle_open and game.grid[game.puzzle_gate[0][1]][game.puzzle_gate[0][0]] == 0
+            finish_shift(game)
+            walk_cells(game,selected.path);walk_cells(game,tuple(reversed(selected.path)))
+            assert selected.gate in game.visited
+            before = other.path[other.path.index(other.gate)-1]
+            game.player.x,game.player.y = before[0]+.5,before[1]+.5
+            dx,dy = other.gate[0]-before[0],other.gate[1]-before[1]
+            game.move_straight(dx*20,dy*20)
+            assert math.dist((game.player.x,game.player.y),(before[0]+.5,before[1]+.5)) <= .290001
+            # 기존 일반 경로도 같은 충돌·이동 코드로 여전히 걸을 수 있다.
+            walk_cells(game,shortest_path(game.maze_layouts.grids[game.phase],CHOICE_START,CHOICE_GOAL))
+            for _ in range(3):
+                game.phase_time = PHASE_SECONDS-.01;game.update(.02);finish_shift(game)
+                assert game.shortcut_choice.opened and game.shortcut_choice.selected == index
+                assert game.grid[selected.gate[1]][selected.gate[0]] == 0 and game.grid[other.gate[1]][other.gate[0]] == 1
+            walk_cells(game,shortest_path(game.maze_layouts.grids[game.phase],game.spawn,game.exit))
+            game.interact();assert game.state == 'clear'
+            assert source == tuple(tuple(tuple(row) for row in grid) for grid in game.maze_layouts.grids)
+            fresh = Game(117,0)
+            assert fresh.shortcut_choice.preview is fresh.shortcut_choice.selected is fresh.shortcut_choice.reserved_phase is None
+            assert not fresh.shortcut_choice.opened and all(fresh.grid[o.gate[1]][o.gate[0]] for o in fresh.route_options)
+    print('PASS: both routes/all 3 phases through Game: queued confirmation, independent real P reservation, exact swap, selected two-way movement, rejected other gate, original walking/normal exit, later phases and fresh run.')
+
+
+def check_interruptions():
+    game = opened()
+    assert game.select_shortcut(0) and game.request_shortcut_confirmation()
+    assert not game.select_shortcut(1) and game.shortcut_choice.preview == 0
+    game.cancel_puzzle_drag()  # 버튼을 놓은 일반 포인터 이동은 확정 요청과 무관하다.
+    assert game.choice_confirm_requested
+    game.update(.02)
+    assert game.shortcut_choice.selected == 0 and game.state == 'explore'
+    for cause in ('escape','hit','fatal','phase','already_dead'):
+        game = opened()
+        game.select_shortcut(1)
+        assert game.request_shortcut_confirmation()
+        if cause == 'escape':game.close_puzzle()
+        elif cause == 'phase':game.phase_time = PHASE_SECONDS-.01
+        elif cause == 'already_dead':game.player.hp = 0
+        else:
+            game.guard = CHOICE_START
+            game.guard_hp = 3
+            game.guard_attack_at = game.time+.01
+            if cause == 'fatal':game.player.hp = 15
+        game.update(.02)
+        assert game.shortcut_choice.selected is None and game.shortcut_choice.reserved_phase is None
+        assert not game.choice_confirm_requested and not game.shortcut_choice.opened
+        if cause == 'phase':
+            assert game.shortcut_choice.preview is None and game.state == 'shifting'
+            finish_shift(game)
+        else:
+            assert game.shortcut_choice.preview == 1
+            assert game.state == ('failed' if cause in ('fatal','already_dead') else 'explore')
+        if cause in ('escape','hit','phase'):
+            game.guard_hp = 0;game.interact()
+            assert game.state == 'puzzle' and game.shortcut_choice.preview == (None if cause == 'phase' else 1)
+    print('PASS: Esc, same-update nonfatal/fatal hit, pre-existing failure and phase beat queued confirm; same-phase draft resumes, phase clears only an unconfirmed draft.')
+    print('PASS: pending confirmation locks its clicked candidate and survives ordinary pointer/drag release.')
+
+
 def run():
-    check_reservation();check_candidates()
+    check_reservation();check_candidates();check_game_cycle();check_interruptions()
 
 
 if __name__ == '__main__':
