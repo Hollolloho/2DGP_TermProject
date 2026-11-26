@@ -1,0 +1,44 @@
+{
+  "schema": "explorer.pose.pico2d.v1",
+  "image": "idle-sw.png",
+  "sheet_size": [
+    64,
+    64
+  ],
+  "frame_size": [
+    64,
+    64
+  ],
+  "pivot": [
+    32,
+    54
+  ],
+  "pivot_coordinates": "top-left; shared ground root",
+  "display_size_logical": [
+    64,
+    64
+  ],
+  "sampling": "nearest",
+  "finish": "hand-painted RGBA",
+  "visual_body_height_approx_px": 48,
+  "clips": {
+    "idle-sw": {
+      "direction": "sw",
+      "frames": [
+        {
+          "rect": [
+            0,
+            0,
+            64,
+            64
+          ]
+        }
+      ],
+      "durations_ms": [
+        1000
+      ],
+      "loop": true,
+      "still_frame": 0
+    }
+  }
+}
