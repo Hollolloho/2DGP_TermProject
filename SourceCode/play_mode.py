@@ -3,7 +3,7 @@ import ctypes
 import json
 import pico2d.pico2d as p
 from .maze_model import Game
-from .game_view import View, LW, LH, PUZZLE_OFFSET_X
+from .game_view import View, LW, LH, PUZZLE_OFFSET_X, CHOICE_CARD_RECTS, CHOICE_CONFIRM_RECT
 from .game_audio import Audio
 from .puzzle_layout import connection_cell, connection_piece_at, on_loose_floor
 
@@ -28,6 +28,7 @@ class PlayMode:
     def release_input(self):
         self.held.clear()
         self.game.cancel_puzzle_drag()
+        self.game.choice_confirm_requested = False
         self.view.connection_pointer = None
         self.puzzle_mouse_held = False
         self.game.boulder_return_requested = self.game.boulder_exit_requested = False
@@ -94,6 +95,13 @@ class PlayMode:
                             index = connection_piece_at(self.game.connection,point)
                             if index is not None:
                                 self.game.pick_connection(index)
+                        elif self.game.puzzle_tab == 'choice':
+                            for index,(x,y,w,h) in enumerate(CHOICE_CARD_RECTS):
+                                if x <= point[0] < x+w and y <= point[1] < y+h:
+                                    self.game.select_shortcut(index)
+                            x,y,w,h = CHOICE_CONFIRM_RECT
+                            if x <= point[0] < x+w and y <= point[1] < y+h:
+                                self.game.request_shortcut_confirmation()
                         else:
                             self.game.puzzle.press(point)
                     self.puzzle_mouse_held = True
@@ -113,7 +121,7 @@ class PlayMode:
                     point = self.mouse_point(event.motion)
                     if self.game.state == 'path_room':
                         self.view.connection_pointer = point
-                    else:
+                    elif self.game.puzzle_tab == 'maze':
                         self.game.drag_puzzle(point)
 
         if not self.smoke and not p.SDL_GetWindowFlags(p.window) & p.SDL_WINDOW_INPUT_FOCUS:
@@ -122,7 +130,7 @@ class PlayMode:
     def mouse_point(self, event):
         width, height = ctypes.c_int(), ctypes.c_int()
         p.SDL_GetWindowSize(p.window, ctypes.byref(width), ctypes.byref(height))
-        offset = PUZZLE_OFFSET_X if self.game.state == 'puzzle' else 0
+        offset = PUZZLE_OFFSET_X if self.game.state == 'puzzle' and self.game.puzzle_tab == 'maze' else 0
         return event.x*LW//max(1, width.value)-offset, event.y*LH//max(1, height.value)
 
     def update(self, dt):

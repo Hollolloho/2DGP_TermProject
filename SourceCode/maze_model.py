@@ -6,6 +6,7 @@ import random
 from transitions import Machine
 from .mouse_maze import MouseMaze
 from .world_path_room import WorldPathRoom, ENTER_SECONDS, START, REVERSE_START, TRAVERSE_CELLS
+from .shortcut_choice import ShortcutChoice, ROUTE_OPTIONS, CHOICE_START, CHOICE_GOAL
 
 COLS, ROWS = 31, 23
 # 쿼터뷰 지면의 반쪽 타일 크기. 렌더링과 이동 속도 계산이 같은 투영을 사용한다.
@@ -280,6 +281,9 @@ class Game:
             self.maze_layouts.landmarks.update(path_entry=self.path_entry,path_exit=self.path_exit)
             self.maze_layouts.protected_cells.update(landmark_area((self.path_entry,self.path_exit)))
         self.world_path = WorldPathRoom()
+        self.route_options = self.choose_shortcut_routes()
+        self.shortcut_choice = ShortcutChoice()
+        self.choice_confirm_requested = False
         self.connection = self.world_path.puzzle
         self.path_completed = self.path_discovered = False
         self.path_return = None
@@ -341,6 +345,31 @@ class Game:
             transitions=[['rest', '*', 'idle'], ['walk_now', '*', 'walk'],
                          ['sprint_now', '*', 'sprint'], ['swing', '*', 'attack']])
         self.update_visibility()
+
+    def choose_shortcut_routes(self):
+        """기획에서 실측한 117 첫 회차의 두 길을 여섯 지형 조건에서 검증한다."""
+        if (self.seed,self.run_number) != (117,0):
+            return ()
+        protected = self.maze_layouts.protected_cells | set(self.puzzle_gate or ()) | {self.torch_wall}
+        if any(option.gate in protected for option in ROUTE_OPTIONS):
+            return ()
+        for base in self.maze_layouts.grids:
+            for p_open in (False,True):
+                original = [row[:] for row in base]
+                if self.puzzle_gate:
+                    x,y = self.puzzle_gate[0];original[y][x] = int(not p_open)
+                ordinary = distances(original,CHOICE_START).get(CHOICE_GOAL,0)
+                for option in ROUTE_OPTIONS:
+                    x,y = option.gate
+                    if not original[y][x]:return ()
+                    grid = [row[:] for row in original];grid[y][x] = 0
+                    if (any(grid[y][x] for x,y in option.path)
+                            or not self.maze_layouts.is_valid(grid)
+                            or not option.distance < ordinary
+                            or distances(grid,CHOICE_START).get(CHOICE_GOAL) != option.distance
+                            or distances(grid,self.exit).get(CHOICE_GOAL,0) < 8):
+                        return ()
+        return ROUTE_OPTIONS
 
     def choose_boulder_shortcut(self):
         """검증된 117 첫 회차 후보만 선택하고, 안전하지 않으면 생략한다."""
@@ -475,10 +504,38 @@ class Game:
         wall, near, far = self.puzzle_gate
         return wall in self.visible and (self.close_to(near, .75) or self.close_to(far, .75))
 
+    def shortcut_available(self):
+        return (self.state == 'explore' and not self.map_open and bool(self.route_options)
+                and self.shortcut_choice.selected is None and CHOICE_START in self.visible
+                and self.close_to(CHOICE_START,.75))
+
+    def select_shortcut(self, index):
+        return (self.state == 'puzzle' and self.puzzle_tab == 'choice'
+                and not self.choice_confirm_requested
+                and self.shortcut_choice.select(index))
+
+    def request_shortcut_confirmation(self):
+        if (self.state != 'puzzle' or self.puzzle_tab != 'choice' or self.player.hp <= 0
+                or self.shortcut_choice.preview is None or self.shortcut_choice.selected is not None):
+            return False
+        self.choice_confirm_requested = True
+        return True
+
+    def _confirm_shortcut(self):
+        if (self.state != 'puzzle' or self.puzzle_tab != 'choice' or self.player.hp <= 0
+                or self.phase_time >= PHASE_SECONDS or not self.shortcut_choice.confirm(self.next_phase)):
+            return False
+        option = self.route_options[self.shortcut_choice.selected]
+        self.close_puzzle()
+        self.message(f'{option.label} 확정 · 다음 {PHASES[self.next_phase]}에 선택한 문만 개방',5)
+        return True
+
     def close_puzzle(self):
+        self.choice_confirm_requested = False
         if self.state == 'puzzle':
             self.cancel_puzzle_drag()
             self.leave_puzzle()
+            self.puzzle_tab = 'maze'
 
     def cancel_puzzle_drag(self):
         self.puzzle.release()
@@ -511,7 +568,8 @@ class Game:
                 and self.connection.pick(index))
 
     def _complete_puzzle(self):
-        if self.state != 'puzzle' or self.puzzle_reserved_phase is not None or self.puzzle_open:
+        if (self.state != 'puzzle' or self.puzzle_tab != 'maze'
+                or self.puzzle_reserved_phase is not None or self.puzzle_open):
             return False
         self.puzzle_reserved_phase = self.next_phase
         self.puzzle.reset()
@@ -523,6 +581,10 @@ class Game:
         grid = self.maze_layouts.copy_for_phase(phase)
         if self.puzzle_gate and (self.puzzle_open or self.puzzle_reserved_phase == phase):
             x, y = self.puzzle_gate[0]
+            grid[y][x] = 0
+        route = self.shortcut_choice.route_for_phase(phase)
+        if route is not None and self.route_options:
+            x,y = self.route_options[route].gate
             grid[y][x] = 0
         return grid
 
@@ -626,6 +688,7 @@ class Game:
         if self.state == 'path_room':
             self.return_from_path()
         self.close_puzzle()
+        self.shortcut_choice.cancel()
         self.puzzle.reset()
         if not self.path_completed:
             self.world_path.reset()
@@ -647,6 +710,7 @@ class Game:
         if self.puzzle_reserved_phase == next_phase:
             self.puzzle_open = True
             self.puzzle_reserved_phase = None
+        self.shortcut_choice.apply_phase(next_phase)
         self.player.x, self.player.y = self.safe_position(next_grid)
         self.grid = next_grid
         if self.guard_hp and (
@@ -914,10 +978,17 @@ class Game:
             self.attack_hits_ms = ()
             self.guard_attack_at = None
             self.escape()
+        elif self.shortcut_available():
+            self.attack_facing = self.attack_clip = None
+            self.attack_hits_ms = ()
+            self.player.rest()
+            self.puzzle_tab = 'choice'
+            self.enter_puzzle()
         elif self.puzzle_available():
             self.attack_facing = self.attack_clip = None
             self.attack_hits_ms = ()
             self.player.rest()
+            self.puzzle_tab = 'maze'
             self.enter_puzzle()
         self.update_visibility()
 
@@ -1045,6 +1116,10 @@ class Game:
         self.ui_time += dt
         if self.state in ('clear', 'failed'):
             return
+        if self.state == 'puzzle' and self.puzzle_tab == 'choice' and self.player.hp <= 0:
+            self.close_puzzle()
+            self.fail()
+            return
         if self.state == 'path_room' and self.player.hp <= 0:
             self.fail()
             return
@@ -1071,6 +1146,9 @@ class Game:
             return
         if self.state == 'puzzle':
             self.update_guard(dt)
+            if self.choice_confirm_requested:
+                self._confirm_shortcut()
+            self.choice_confirm_requested = False
             return
         if self.state == 'trap':
             if self.trap_kind == 'boulder':
