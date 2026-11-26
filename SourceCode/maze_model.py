@@ -4,9 +4,11 @@ from dataclasses import dataclass
 import math
 import random
 from transitions import Machine
+from . import demo_course
+from .first_person import walk_velocity
 from .mouse_maze import MouseMaze
 from .world_path_room import WorldPathRoom, ENTER_SECONDS, START, REVERSE_START, TRAVERSE_CELLS
-from .shortcut_choice import ShortcutChoice, ROUTE_OPTIONS, CHOICE_START, CHOICE_GOAL
+from .shortcut_choice import ShortcutChoice, ShortcutRoute, CHOICE_START, CHOICE_GOAL, DEMO_GATES
 
 COLS, ROWS = 31, 23
 # 쿼터뷰 지면의 반쪽 타일 크기. 렌더링과 이동 속도 계산이 같은 투영을 사용한다.
@@ -34,10 +36,6 @@ TRAP_LENGTH, TRAP_HALF_WIDTH, TRAP_HEIGHT = 9.0, 1.6, 3.0
 TRAP_LATERAL, BLADE_RADIUS, PLAYER_RADIUS = 1.1, .34, .20
 TRAP_PLANES = (.30, .58, .82)
 SPRINT_STAMINA_COST = 18.0  # ST/s, 일반 미로와 두 함정방의 공통 소모량.
-# 외부 격자 통로 칸 수. 기존 함정의 최소 우회·도착 후 탐색 조건을 재사용한다.
-BOULDER_MIN_BYPASS_CELLS, BOULDER_MIN_REMAINING_CELLS = 15, 10
-
-
 def project(x, y):
     """카메라와 확대를 제외한 논리 화면의 지면 좌표로 바꾼다."""
     return HALF_TILE_W*(x-y), HALF_TILE_H*(x+y)
@@ -90,7 +88,10 @@ def distances(grid, start):
 
 def shortest_path(grid, start, goal):
     """도착점까지의 거리표를 따라 최단 경로를 만든다."""
-    remaining = distances(grid, goal)
+    return follow_distances(start,goal,distances(grid,goal))
+
+
+def follow_distances(start,goal,remaining):
     path = [start]
     while path[-1] != goal:
         x, y = path[-1]
@@ -127,12 +128,12 @@ class MazeLayouts:
 
     CHANGES_PER_PHASE = 3  # 테스트값: 통로 3칸 폐쇄, 다른 벽 3칸 개방.
 
-    def __init__(self, base_grid, seed, landmarks):
+    def __init__(self, base_grid, seed, landmarks, fixed_cells=()):
         self.landmarks = landmarks
         self.protected_cells = landmark_area(landmarks.values())
 
         self.grids = [[row[:] for row in base_grid]]
-        used_cells = set()
+        used_cells = set(fixed_cells)
         for phase in (1, 2):
             grid = self.make_variant(base_grid, seed + phase * 997, used_cells)
             self.grids.append(grid)
@@ -155,7 +156,8 @@ class MazeLayouts:
             return False
         if exit_distances[points['spawn']] <= 25:
             return False
-        if exit_distances[points['trap_exit']] < 10:
+        if (exit_distances[points['trap_exit']] < 10
+                or exit_distances[points['trap_entry']] <= exit_distances[points['trap_exit']]):
             return False
 
         trap_distances = distances(grid, points['trap_entry'])
@@ -240,48 +242,60 @@ class Player:
 
 
 class Game:
-    def __init__(self, seed=117, run_number=0, player_clips=None):
+    def __init__(self, seed=117, run_number=0, player_clips=None, *, test_course=False):
+        self.test_course = test_course
+        if test_course:
+            seed, run_number = demo_course.SEED, 0
         self.seed, self.run_number = seed, run_number
         self.player_clips = player_clips if player_clips is not None else {}
         self.grid = make_maze(seed)
+        if test_course:
+            self.grid = demo_course.build_grid(self.grid, distances)
         self.exit = (COLS//2, ROWS//2)
         paths = distances(self.grid, self.exit)
         # 보관된 구현의 테스트값: 숏컷 뒤에도 탐색할 거리가 남도록 31칸 이상 이격한다.
         candidates = [cell for cell, distance in paths.items() if distance >= 31 and
                       (cell[0] in (1, COLS-2) or cell[1] in (1, ROWS-2))]
-        self.spawn = random.Random(seed+run_number*31).choice(candidates)
+        self.spawn = demo_course.SPAWN if test_course else random.Random(seed+run_number*31).choice(candidates)
         path = shortest_path(self.grid, self.spawn, self.exit)
         self.trap_cell = path[5]
         self.trap_exit, self.fountain = path[min(24,len(path)-12)], path[15]
+        if test_course:
+            self.trap_cell, self.trap_exit = demo_course.BLADE_ENTRY, demo_course.BLADE_EXIT
         reserved = {self.spawn, self.trap_cell, self.trap_exit, self.fountain, self.exit}
         # 획득은 통로에서, 그림은 벽과 통로의 경계에서 처리한다.
         self.torch_cell, self.torch_wall = choose_torch_mount(self.grid, path, reserved)
         self.torch_wall_contact = (tuple((floor+wall+1)/2 for floor, wall in zip(self.torch_cell, self.torch_wall))
                                    if self.torch_wall is not None else None)
-        self.trap_discovered, self.trap_completed = False, False
+        self.trap_discovered = self.trap_completed = self.boulder_completed = False
         self.landing_until = 0.0
         self.landing_cell = None
         protected=(self.spawn,self.torch_cell,self.trap_cell,self.trap_exit,self.fountain,self.exit)
-        self.guard_home = guard_position(self.grid,path,protected,seed)
+        self.guard_home = demo_course.GUARD_HOME if test_course else guard_position(self.grid,path,protected,seed)
+        self.guard_hp = 3
         self.guard = self.guard_home
         landmarks = {
             'spawn': self.spawn, 'exit': self.exit, 'torch': self.torch_cell,
             'trap_entry': self.trap_cell, 'trap_exit': self.trap_exit,
             'fountain': self.fountain, 'guardian': self.guard,
         }
-        self.maze_layouts = MazeLayouts(self.grid, seed, landmarks)
-        self.puzzle_gate = self.choose_puzzle_gate()
-        self.boulder_entry, self.boulder_exit = self.choose_boulder_shortcut() or (None, None)
-        if self.boulder_entry is not None:
-            self.maze_layouts.landmarks.update(boulder_entry=self.boulder_entry, boulder_exit=self.boulder_exit)
-            self.maze_layouts.protected_cells.update(landmark_area((self.boulder_entry, self.boulder_exit)))
+        fixed_cells = ((x, y) for y in range(ROWS) for x in range(COLS)
+                       if y < demo_course.FIRST_VARIABLE_ROW or x >= 14) if test_course else ()
+        self.maze_layouts = MazeLayouts(self.grid,seed,landmarks,fixed_cells)
+        self.puzzle_gate = demo_course.MOUSE_GATE if test_course else self.choose_puzzle_gate()
         self.puzzle = MouseMaze()
-        self.path_entry,self.path_exit = self.choose_world_path() or (None,None)
+        self.path_entry,self.path_exit = ((demo_course.SLAB_ENTRY, demo_course.SLAB_EXIT) if test_course
+                                         else self.choose_world_path() or (None,None))
         if self.path_entry is not None:
             self.maze_layouts.landmarks.update(path_entry=self.path_entry,path_exit=self.path_exit)
             self.maze_layouts.protected_cells.update(landmark_area((self.path_entry,self.path_exit)))
         self.world_path = WorldPathRoom()
         self.route_options = self.choose_shortcut_routes()
+        self.boulder_entry,self.boulder_exit = ((demo_course.BOULDER_ENTRY, demo_course.BOULDER_EXIT) if test_course
+                                                else self.choose_boulder_shortcut() or (None,None))
+        if self.boulder_entry is not None:
+            self.maze_layouts.landmarks.update(boulder_entry=self.boulder_entry,boulder_exit=self.boulder_exit)
+            self.maze_layouts.protected_cells.update(landmark_area((self.boulder_entry,self.boulder_exit)))
         self.shortcut_choice = ShortcutChoice()
         self.choice_confirm_requested = False
         self.connection = self.world_path.puzzle
@@ -293,7 +307,6 @@ class Game:
         self.phase = self.layout_phase = run_number % 3
         self.grid = self.maze_layouts.copy_for_phase(self.phase)
         self.path = shortest_path(self.grid, self.spawn, self.exit)
-        self.shortcut_distance = distances(self.grid, self.trap_cell)[self.trap_exit]
         self.player = Player(self.spawn[0]+.5, self.spawn[1]+.5)
         delta = (self.path[1][0]-self.path[0][0], self.path[1][1]-self.path[0][1])
         self.player.direction = DIRECTIONS.index(delta)
@@ -305,7 +318,7 @@ class Game:
         self.guard_alert_until=0.0
         self.guard_seen_until = self.guard_ready_at = 0.
         self.guard_attack_at = None
-        self.guard_hp, self.fountain_used = 3, False
+        self.fountain_used = False
         self.phase_time = self.time = 0.0
         # UI·변형 연출 시계만 계속 움직이고, 변형 중 게임 세계 시계는 멈춘다.
         self.ui_time = self.shift_elapsed = 0.0
@@ -324,11 +337,13 @@ class Game:
         self.banner, self.banner_until = '횃불에 접근해 F를 눌러 보세요', 5.0
         self.trap_kind = 'blade'
         self.boulder_room = None
-        self.boulder_discovered = self.boulder_completed = False
+        self.boulder_discovered = False
         self.boulder_return_requested = self.boulder_exit_requested = False
+        self.trap_yaw = self.trap_movement_yaw = 0.
         self.trap_progress, self.trap_x, self.trap_cooldown = 0.0, 0.0, 0.0
         self.trap_return = None
         self.trap_return_direction = self.player.direction
+        self.trap_return_facing = self.player.screen_facing
         self.trap_velocity = self.trap_side_velocity = self.trap_stride = 0.0
         self.trap_hit_at = -10.0
         self.machine = Machine(model=self, states=['explore', 'puzzle', 'trap', 'path_room', 'shifting', 'clear', 'failed'],
@@ -346,76 +361,193 @@ class Game:
                          ['sprint_now', '*', 'sprint'], ['swing', '*', 'attack']])
         self.update_visibility()
 
+    @property
+    def shortcut_distance(self):
+        return distances(self.grid,self.trap_cell)[self.trap_exit]
+
     def choose_shortcut_routes(self):
-        """기획에서 실측한 117 첫 회차의 두 길을 여섯 지형 조건에서 검증한다."""
-        if (self.seed,self.run_number) != (117,0):
+        """Find two independent one-wall shortcuts between shared floor cells."""
+        layouts = self.maze_layouts
+        base = layouts.grids[0]
+        protected = layouts.protected_cells | set(self.puzzle_gate or ()) | {self.torch_wall}
+        variants = []
+        for original in layouts.grids:
+            variants.append(original)
+            if self.puzzle_gate:
+                x,y = self.puzzle_gate[0]
+                opened = [row[:] for row in original]
+                opened[y][x] = 0
+                variants.append(opened)
+
+        walls = {}
+        for y in range(1,ROWS-1):
+            for x in range(1,COLS-1):
+                if (x,y) in protected or not all(grid[y][x] for grid in variants):
+                    continue
+                neighbours = [(x+dx,y+dy) for dx,dy in DIRECTIONS if not base[y+dy][x+dx]]
+                if len(neighbours)==2 and all(grid[y+dy][x+dx]==base[y+dy][x+dx]
+                                               for grid in variants for dx,dy in DIRECTIONS):
+                    walls[x,y] = neighbours
+
+        # A single new edge through a wall costs two steps between its neighbours.
+        # Two ordinary distance fields price every candidate without carving trial mazes.
+        def crossing(before,after,gate):
+            a,b = walls[gate]
+            return 2 + min(before[a]+after[b],before[b]+after[a])
+
+        cached = {}
+        def field(grid,cell):
+            key = id(grid),cell
+            if key not in cached:
+                cached[key] = distances(grid,cell)
+            return cached[key]
+
+        gate_validity = {}
+        def safe_gate(gate):
+            if gate not in gate_validity:
+                x,y = gate
+                a,b = walls[gate]
+                for grid in variants:
+                    # Carving a two-sided wall cannot disconnect any passage.
+                    remaining = field(grid,self.exit)
+                    blade = field(grid,self.trap_cell)
+                    landing = field(grid,self.trap_exit)
+                    end_dist = min(remaining[self.trap_exit],crossing(landing,remaining,gate))
+                    if (crossing(field(grid,self.spawn),remaining,gate)<=25
+                            or crossing(blade,landing,gate)<15 or end_dist<10
+                            or min(remaining[self.trap_cell],crossing(blade,remaining,gate))<=end_dist):
+                        gate_validity[gate] = False
+                        break
+                    guard = field(grid,self.guard_home)
+                    if any(guard[near]+2+field(grid,far)[cell] < 4
+                           for near,far in ((a,b),(b,a)) if guard[near]<2
+                           for name,cell in layouts.landmarks.items() if name!='guardian'):
+                        gate_validity[gate] = False
+                        break
+                else:
+                    gate_validity[gate] = True
+            return gate_validity[gate]
+
+        def options(start,goal,gates):
+            if start in protected or goal in protected:
+                return ()
+            found = []
+            for gate in gates:
+                if gate not in walls or not safe_gate(gate):
+                    continue
+                x,y = gate
+                before,after = field(base,start),field(base,goal)
+                a,b = walls[gate]
+                if before[b]+after[a]<before[a]+after[b]:
+                    a,b = b,a
+                length = before[a]+2+after[b]
+                if length>=before[goal]:
+                    continue
+                path = (*reversed(follow_distances(a,start,before)),gate,*follow_distances(b,goal,after))
+                for grid in variants:
+                    before,after = field(grid,start),field(grid,goal)
+                    if (any(grid[cy][cx] for cx,cy in path if (cx,cy)!=gate)
+                            or length >= before[goal] or crossing(before,after,gate)!=length
+                            or min(after[self.exit],crossing(after,field(grid,self.exit),gate)) < 8):
+                        break
+                else:
+                    trial = [row[:] for row in base]
+                    trial[y][x] = 0
+                    exposure = self.route_exposure(path,trial)
+                    found.append(ShortcutRoute(f'{len(found)+1}번 통로',gate,path,exposure))
+                    if len(found)==2:
+                        return tuple(found)
             return ()
-        protected = self.maze_layouts.protected_cells | set(self.puzzle_gate or ()) | {self.torch_wall}
-        if any(option.gate in protected for option in ROUTE_OPTIONS):
+
+        if self.test_course:
+            return options(demo_course.CHOICE_ENTRY, demo_course.CHOICE_EXIT, demo_course.CHOICE_GATES)
+
+        # Prefer the measured demonstration geometry when the actual landmarks allow it.
+        demo_start,demo_goal = CHOICE_START,CHOICE_GOAL
+        if all(not base[y][x] for x,y in (demo_start,demo_goal)):
+            demo = options(demo_start,demo_goal,DEMO_GATES)
+            if demo:
+                return demo
+
+        spine = shortest_path(base,self.spawn,self.exit)
+        for i,start in enumerate(spine[2:-14],2):
+            if start in protected:
+                continue
+            before = field(base,start)
+            for goal in reversed(spine[i+6:min(i+23,len(spine)-8)]):
+                if goal in protected:
+                    continue
+                after = field(base,goal)
+                candidates = [(crossing(before,after,gate),gate) for gate in walls]
+                viable = [gate for length,gate in sorted(candidates) if length < before[goal]]
+                if len(viable)>=2:
+                    pair = options(start,goal,viable)
+                    if pair:
+                        return pair
+        return ()
+
+    @property
+    def choice_start(self):
+        return self.route_options[0].path[0]
+
+    @property
+    def choice_goal(self):
+        return self.route_options[0].path[-1]
+
+    def route_exposure(self,path,grid):
+        if not self.guard_hp:
             return ()
-        for base in self.maze_layouts.grids:
-            for p_open in (False,True):
-                original = [row[:] for row in base]
-                if self.puzzle_gate:
-                    x,y = self.puzzle_gate[0];original[y][x] = int(not p_open)
-                ordinary = distances(original,CHOICE_START).get(CHOICE_GOAL,0)
-                for option in ROUTE_OPTIONS:
-                    x,y = option.gate
-                    if not original[y][x]:return ()
-                    grid = [row[:] for row in original];grid[y][x] = 0
-                    if (any(grid[y][x] for x,y in option.path)
-                            or not self.maze_layouts.is_valid(grid)
-                            or not option.distance < ordinary
-                            or distances(grid,CHOICE_START).get(CHOICE_GOAL) != option.distance
-                            or distances(grid,self.exit).get(CHOICE_GOAL,0) < 8):
-                        return ()
-        return ROUTE_OPTIONS
+        return tuple((x,y) for x,y in path
+                     if math.hypot(x+.5-self.guard_x,y+.5-self.guard_y) <= GUARD_NOTICE_RADIUS
+                     and self.clear_line(self.guard_x,self.guard_y,x+.5,y+.5,lambda x,y: self.solid(x,y,grid)))
 
     def choose_boulder_shortcut(self):
-        """검증된 117 첫 회차 후보만 선택하고, 안전하지 않으면 생략한다."""
-        if (self.seed, self.run_number) != (117, 0):
-            return None
-        entry, arrival = (9, 6), (11, 13)
-        return (entry, arrival) if self.valid_boulder_shortcut(entry, arrival) else None
-
-    def valid_boulder_shortcut(self, entry, arrival):
-        """지형을 바꾸지 않고 세 시간대×퍼즐 문 개폐의 경로·복귀 안전을 검사한다."""
-        if any(not (1 <= x < COLS-1 and 1 <= y < ROWS-1) for x,y in (entry, arrival)):
-            return False
-        entry_area, arrival_area = landmark_area((entry,)), landmark_area((arrival,))
-        if entry_area & arrival_area:
-            return False
-        area = entry_area | arrival_area
+        """Choose safe, stable C/D across all actual combinations of doors."""
         layouts = self.maze_layouts
-        existing = [cell for name,cell in layouts.landmarks.items()
-                    if name not in ('boulder_entry', 'boulder_exit')]
-        if area & landmark_area(existing) or (self.puzzle_gate and area & set(self.puzzle_gate)):
-            return False
-        for base in layouts.grids:
-            if any(base[y][x] != layouts.grids[0][y][x] for x,y in area):
-                return False
-            for opened in (False, True):
-                grid = [row[:] for row in base]
-                if self.puzzle_gate:
-                    x,y = self.puzzle_gate[0]
-                    grid[y][x] = int(not opened)
-                if any(self.solid(x,y,grid) for x,y in existing):
-                    return False
-                if not all(self.can_stand(x+.5,y+.5,grid) for x,y in (entry, arrival)):
-                    return False
-                if not layouts.is_valid(grid):
-                    return False
-                remaining = distances(grid, self.exit)
-                if remaining[arrival] < BOULDER_MIN_REMAINING_CELLS:
-                    return False
-                if distances(grid, entry)[arrival] < BOULDER_MIN_BYPASS_CELLS:
-                    return False
-                if distances(grid, self.spawn)[entry]+remaining[arrival] >= remaining[self.spawn]:
-                    return False
-                guard = distances(grid, self.guard_home)
-                if any(guard[cell] < 4 for cell in (entry, arrival)):
-                    return False
-        return True
+        base = layouts.grids[0]
+        reserved = layouts.protected_cells | set(self.puzzle_gate or ()) | {self.torch_wall}
+        if self.route_options:
+            reserved.update((self.choice_start,self.choice_goal,*(route.gate for route in self.route_options)))
+        # Opening either shortcut can change the ordinary trip and distance left.
+        variants = []
+        for phase_grid in layouts.grids:
+            for mouse_gate in (None,self.puzzle_gate[0]) if self.puzzle_gate else (None,):
+                for choice_gate in (None,*(r.gate for r in self.route_options)):
+                    grid = [row[:] for row in phase_grid]
+                    for gate in (mouse_gate,choice_gate):
+                        if gate:
+                            x,y = gate
+                            grid[y][x] = 0
+                    variants.append((grid,distances(grid,self.exit)))
+
+        routes = distances(base,self.spawn)
+        def stable(cell):
+            x,y = cell
+            area = landmark_area((cell,))
+            return (not area & reserved and abs(x-self.guard_home[0])+abs(y-self.guard_home[1])>=4
+                    and all(grid[cy][cx]==base[cy][cx] for grid in layouts.grids for cx,cy in area))
+        cells = [pt for pt in routes if stable(pt)]
+        preferred = {(117,0):(9,6),(6,0):(29,11)}.get((self.seed,self.run_number))
+        entries = sorted((pt for pt in cells if base[pt[1]+1][pt[0]-1] and not base[pt[1]+1][pt[0]]),
+                         key=lambda pt:(pt!=preferred,routes[pt],pt))
+        arrivals = sorted(cells,key=lambda pt:(not ((self.seed,self.run_number)==(117,0) and pt==(11,13)),
+                                              abs(variants[0][1][pt]-12),pt))
+        for entry in entries:
+            ordinary = {}
+            for arrival in arrivals:
+                if (max(abs(entry[0]-arrival[0]),abs(entry[1]-arrival[1]))<=2
+                        or not all(10<=goal[arrival]<goal[entry] for _,goal in variants)):
+                    continue
+                # A 24 m crossing takes about ten seconds walking. Require the
+                # ordinary C-to-D walk to exceed that even with a puzzle door open.
+                for i,(grid,_) in enumerate(variants):
+                    if i not in ordinary:
+                        ordinary[i] = distances(grid,entry)
+                    if ordinary[i][arrival]<26:
+                        break
+                else:
+                    return entry,arrival
+        return None
 
     def choose_world_path(self):
         """여섯 지형 조건에서 안전·왕복 착지·실제 보행 이득을 보장하는 후보만 고른다."""
@@ -423,6 +555,10 @@ class Game:
         base = layouts.grids[0]
         ds,de = distances(base,self.spawn),distances(base,self.exit)
         landmarks = set(layouts.landmarks.values()) | set(self.puzzle_gate or ())
+        # Leave room for the published two-route demonstration before placing
+        # the slab room. The normal candidate search still validates both gates.
+        if (self.seed,self.run_number)==(117,0):
+            landmarks.update((CHOICE_START,CHOICE_GOAL,*DEMO_GATES))
         if self.torch_wall is not None:
             landmarks.add(self.torch_wall)
         fields = []
@@ -449,6 +585,9 @@ class Game:
             return all(goal[arrival] >= 8 and
                        ((goal[self.spawn]-spawn[entry]) if from_spawn else goal[entry]) > cost+goal[arrival]
                        for spawn,goal,_ in fields)
+        demo_pair = ((8,1),(19,9))
+        if (self.seed,self.run_number)==(117,0) and demo_pair in pairs and beneficial(demo_pair,TRAVERSE_CELLS):
+            return demo_pair
         previous = next((pair for pair in pairs if beneficial(pair,10)),None)
         if previous is not None and beneficial(previous,TRAVERSE_CELLS):return previous
         primary = next((pair for pair in pairs if beneficial(pair,TRAVERSE_CELLS)),None)
@@ -506,8 +645,8 @@ class Game:
 
     def shortcut_available(self):
         return (self.state == 'explore' and not self.map_open and bool(self.route_options)
-                and self.shortcut_choice.selected is None and CHOICE_START in self.visible
-                and self.close_to(CHOICE_START,.75))
+                and self.shortcut_choice.selected is None and self.choice_start in self.visible
+                and self.close_to(self.choice_start,.75))
 
     def select_shortcut(self, index):
         return (self.state == 'puzzle' and self.puzzle_tab == 'choice'
@@ -726,7 +865,6 @@ class Game:
         self.observed = self.observed_by_phase[next_phase]
         self.visited = self.visited_by_phase[next_phase]
         self.path = shortest_path(self.grid, self.spawn, self.exit)
-        self.shortcut_distance = distances(self.grid, self.trap_cell)[self.trap_exit]
         self.update_visibility()
 
     def update_shift(self, dt):
@@ -749,7 +887,10 @@ class Game:
         return self.clear_line_to(x+.5, y+.5)
 
     def clear_line_to(self, tx, ty):
-        px, py = self.player.x, self.player.y
+        return self.clear_line(self.player.x,self.player.y,tx,ty,self.solid)
+
+    @staticmethod
+    def clear_line(px,py,tx,ty,solid):
         cx, cy = math.floor(px), math.floor(py)
         x, y = math.floor(tx), math.floor(ty)
         dx, dy = tx-px, ty-py
@@ -766,7 +907,7 @@ class Game:
             # Visit every crossed cell, even when the ray clips only a corner.
             if math.isclose(next_x, next_y, rel_tol=0., abs_tol=1e-12):
                 # A corner shared by two solid cells leaves no opening.
-                if self.solid(cx+step_x, cy) and self.solid(cx, cy+step_y):
+                if solid(cx+step_x, cy) and solid(cx, cy+step_y):
                     return False
                 cx, cy = cx+step_x, cy+step_y
                 next_x, next_y = next_x+stride_x, next_y+stride_y
@@ -777,7 +918,7 @@ class Game:
                 cy += step_y
                 next_y += stride_y
             # The first blocking wall itself is visible.
-            if (cx, cy) != (x, y) and self.solid(cx, cy):
+            if (cx, cy) != (x, y) and solid(cx, cy):
                 return False
         return True
 
@@ -880,6 +1021,7 @@ class Game:
         self.trap_kind = kind
         self.trap_return = self.player.x, self.player.y
         self.trap_return_direction = self.player.direction
+        self.trap_return_facing = self.player.screen_facing
         self.trap_progress = self.trap_x = self.trap_cooldown = 0.0
         self.trap_velocity = self.trap_side_velocity = self.trap_stride = 0.0
         self.boulder_return_requested = self.boulder_exit_requested = False
@@ -899,14 +1041,14 @@ class Game:
         if not self.boulder_available():
             return False
         if self.boulder_room is None:
-            from BoulderPractice.boulder_practice import Practice
-            self.boulder_room = Practice(self.player)
+            from .six_lane_trap import SixLaneTrap
+            self.boulder_room = SixLaneTrap(self.player)
         else:
             self.boulder_room.reset()
         self._enter_trap('boulder')
         self.player.rest()
         self.boulder_discovered = True
-        self.message('돌 출발까지 5초 · 지금 이동할 수 있습니다', 5)
+        self.message('6줄 교차 낙석 · 돌을 보고 중앙으로 건너세요', 5)
         return True
 
     def request_boulder_return(self):
@@ -917,7 +1059,7 @@ class Game:
         if self.state == 'trap' and self.trap_kind == 'boulder':
             self.boulder_exit_requested = True
 
-    def update_boulder(self, dt, dx, dy, running, look_back):
+    def update_boulder(self, dt, dx, dy, running):
         """시간대 경계 뒤 Esc, 돌 충돌, F/자동 출구 순으로 결과를 확정한다."""
         returning, exiting = self.boulder_return_requested, self.boulder_exit_requested
         self.boulder_return_requested = self.boulder_exit_requested = False
@@ -926,7 +1068,7 @@ class Game:
             return
         room = self.boulder_room
         previous_stride = room.stride
-        room.advance(dt, dx, -dy, float(running), look_back)
+        room.advance(dt, dx, -dy, float(running))
         moved = room.stride > previous_stride
         if moved and room.running:
             self.player.stamina = max(0., self.player.stamina-dt*SPRINT_STAMINA_COST)
@@ -961,7 +1103,7 @@ class Game:
         elif self.close_to(self.trap_cell):
             self._enter_trap('blade')
             self.trap_discovered = True
-            self.message(f'A 입구 → B 출구 · 일반 통로 {self.shortcut_distance}칸을 우회', 5)
+            self.message(f'A → B · 일반 통로 {self.shortcut_distance}칸을 우회', 5)
         elif self.boulder_available():
             self.enter_boulder()
         elif self.path_available():
@@ -996,25 +1138,26 @@ class Game:
         if self.state != 'trap':
             return
         boulder = self.trap_kind == 'boulder'
-        target = self.boulder_exit if boulder else self.trap_exit
-        self.player.x, self.player.y = ((target[0]+.5, target[1]+.5)
-                                      if completed else self.trap_return)
+        self.player.x, self.player.y = self.trap_return
         self.player.direction = self.trap_return_direction
+        self.player.screen_facing = self.trap_return_facing
         self.leave_room()
+        self.player.rest()
         self.boulder_return_requested = self.boulder_exit_requested = False
         if boulder and self.boulder_room is not None:
             self.boulder_room.vx = self.boulder_room.vz = 0.
-            self.boulder_room.running = self.boulder_room.look_back = False
-            self.player.rest()
-        if completed:
+            self.boulder_room.running = False
+        reached_exit = completed and (self.boulder_room.state == 'clear' if boulder else self.trap_progress >= 1)
+        if reached_exit and self.player.hp > 0 and self.phase_time < PHASE_SECONDS:
             if boulder:
-                self.boulder_completed = self.boulder_discovered = True
-                self.message('D 도착 · M 지도에서 현재 위치 확인', 8)
+                self.boulder_completed = True
+                target,label = self.boulder_exit,'D'
             else:
-                self.trap_completed = self.trap_discovered = True
-                self.message(f'B 출구 도착 · 일반 통로 {self.shortcut_distance}칸 우회 · M 지도 확인',8)
-            self.landing_until = self.time+10
-            self.landing_cell = target
+                self.trap_completed = True
+                target,label = self.trap_exit,'B'
+            self.player.x,self.player.y = target[0]+.5,target[1]+.5
+            self.landing_cell,self.landing_until = target,self.time+10
+            self.message(f'{label} 출구 도착 · M 지도에서 단축 경로 확인',8)
         else:
             self.message(f'{"C" if boulder else "A"} 입구 · 입장 전 위치로 복귀')
         self.trap_velocity = self.trap_side_velocity = 0.0
@@ -1111,10 +1254,13 @@ class Game:
         else:
             self.message('수호자 피격 · F로 이어 풀기' if was_puzzling else '수호자 피격')
 
-    def update(self, dt, dx=0, dy=0, sprint=False, *, look_back=False):
+    def update(self, dt, dx=0, dy=0, sprint=False):
         dt = min(.05, max(0, dt))
         self.ui_time += dt
         if self.state in ('clear', 'failed'):
+            return
+        if self.state == 'trap' and self.player.hp <= 0:
+            self.fail()
             return
         if self.state == 'puzzle' and self.puzzle_tab == 'choice' and self.player.hp <= 0:
             self.close_puzzle()
@@ -1152,17 +1298,21 @@ class Game:
             return
         if self.state == 'trap':
             if self.trap_kind == 'boulder':
-                self.update_boulder(dt, dx, dy, running, look_back)
+                self.update_boulder(dt, dx, dy, running)
                 return
-            target_speed = -dy*(2.7 if running else 1.8)
-            self.trap_velocity += max(-10*dt,min(10*dt,target_speed-self.trap_velocity))
-            self.trap_side_velocity += max(-12*dt,min(12*dt,dx*1.8-self.trap_side_velocity))
-            self.trap_x = max(-1,min(1,self.trap_x+self.trap_side_velocity*dt))
+            self.trap_side_velocity,self.trap_velocity = walk_velocity(
+                dx, -dy, self.trap_yaw, self.trap_movement_yaw,
+                self.trap_side_velocity, self.trap_velocity, 2.7 if running else 1.8, 10., dt)
+            self.trap_movement_yaw = self.trap_yaw
+            old_x = self.trap_x
+            self.trap_x = max(-1,min(1,old_x+self.trap_side_velocity*dt/TRAP_LATERAL))
             change = self.trap_velocity*dt
             old_progress = self.trap_progress
             self.trap_progress = max(0,self.trap_progress+change/TRAP_LENGTH)
-            self.trap_stride += abs(self.trap_progress-old_progress)*TRAP_LENGTH
-            if running and dy:
+            travelled = math.hypot((self.trap_x-old_x)*TRAP_LATERAL,
+                                   (self.trap_progress-old_progress)*TRAP_LENGTH)
+            self.trap_stride += travelled
+            if running and (dx or dy) and travelled>1e-8:
                 self.player.stamina -= sprint_cost
             self.trap_cooldown = max(0, self.trap_cooldown-dt)
             for index, plane in enumerate(TRAP_PLANES):

@@ -24,6 +24,14 @@ def inject_key(key, down=True):
     assert p.SDL_PushEvent(event)==1
 
 
+def regain_focus(app):
+    event = p.SDL_Event()
+    event.type = p.SDL_WINDOWEVENT
+    event.window.event = p.SDL_WINDOWEVENT_FOCUS_GAINED
+    assert p.SDL_PushEvent(event)==1
+    app.handle_events()
+
+
 def inject_mouse(event_type, point, held=True):
     event = p.SDL_Event()
     event.type = event_type
@@ -280,6 +288,7 @@ def run(app):
             app.handle_events()
             mouse(motion, below)
             assert room.puzzle.cell == (3, 1) and not room.puzzle.dragging
+            regain_focus(app)
             assert room.puzzle.cursor == resized and room.puzzle.preview_cell == (3, 2)
             mouse(up, resized)
             mouse(down, resized)
@@ -1119,7 +1128,7 @@ def run(app):
     app.view.draw(g)
     press(w, ticks=300)
     assert g.state == 'explore' and g.trap_completed and g.trap_exit in g.visited
-    assert (player.x, player.y) == (g.trap_exit[0]+.5, g.trap_exit[1]+.5)
+    assert (player.x, player.y) == (g.trap_exit[0]+.5,g.trap_exit[1]+.5)
     snapshot('06-quarter-return-b.png')
     check_shortcut_visibility()
     check_phase_render()
@@ -1135,8 +1144,8 @@ def run(app):
         'sdl_opposite_keys_cancel':True,'sdl_arrows_inactive':True,'sdl_straight_wall_stop':True,
         'sdl_equal_projected_speed':True,'sdl_30_60_120_variable_dt':True,'sdl_swept_corner_collision':True,
         'sdl_trap_WASD':True,
-        'sdl_F_trap':True,'sdl_W_fixed_first_person':True,
-        'sdl_Esc_exact_return':True,'sdl_W_shortcut_arrival':True,
+        'sdl_F_trap':True,'sdl_W_forward_first_person':True,
+        'sdl_Esc_exact_return':True,'sdl_W_trap_completion':True,
         'sdl_shortcut_return_visible_and_occlusion_assist':True,
         'sdl_phase_shift':True,'fixed_hud_during_shift':True,'one_shot_phase_sounds':True,
         'sdl_dawn_puzzle_both_approaches':True,

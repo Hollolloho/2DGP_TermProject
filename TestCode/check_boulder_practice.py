@@ -66,8 +66,8 @@ def main():
     assert g.use_exit() and g.exit_used=='narrow' and g.state=='clear'
     g.reset();g.x,g.z=1,52
     assert g.use_exit() and g.exit_used=='wide'
-    g.reset();steps(g,.2,dx=1,look_back=True)
-    assert g.x>0 and g.look_back,'rear view should not invert input'
+    g.reset();g.yaw=math.pi;steps(g,.2,dx=1)
+    assert g.x<0 and g.yaw==math.pi,'strafe right while looking back should move toward world left'
     routes=[route(style,exit_name) for style in ('walk','timed','held') for exit_name in ('narrow','wide')]
     assert routes[2]['contacts']<routes[0]['contacts'],'timed sprint did not improve this fixed reference route'
     assert routes[2]['stamina']>routes[4]['stamina'],'timed sprint did not preserve resources against held sprint'
@@ -75,7 +75,7 @@ def main():
             'continuous_rotating_surface':True,'fixed_ground_contact_48_phases':True,
             'ball_never_moves_backwards':True,'one_contact_per_overlap':True,'later_recontact_counts':True,
             'empty_stamina_walks':True,
-            'obstacle_collision_and_bypass':True,'both_exits_reachable':True,'rear_view_preserves_input':True,
+            'obstacle_collision_and_bypass':True,'both_exits_reachable':True,'rear_strafe_moves_world_left':True,
             'routes':routes,'note':'Reference steering routes, not a complete balance or human playtest.'}
     OUTPUT.mkdir(parents=True,exist_ok=True)
     (OUTPUT/'rules_checks.json').write_text(json.dumps(report,indent=2),encoding='utf-8')

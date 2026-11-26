@@ -66,7 +66,39 @@ def check_candidates():
                                 if math.dist(cell,game.guard_home) <= GUARD_NOTICE_RADIUS and game.line_of_sight(*cell))
                 assert exposed == option.exposed_cells and len(exposed) == (5,0)[index],(phase,p_open,index,exposed)
     assert saved == tuple(tuple(tuple(row) for row in grid) for grid in game.maze_layouts.grids)
-    assert all(not Game(seed,run).route_options for seed,run in ((118,0),(117,1),(117,2)))
+    generated = []
+    for seed in (0,2,5,9,12,16,18,117):
+        for run in range(3):
+            other = Game(seed,run)
+            if not other.route_options:
+                continue
+            generated.append((seed,run))
+            start,goal = other.choice_start,other.choice_goal
+            protected = other.maze_layouts.protected_cells | set(other.puzzle_gate or ())
+            assert start not in protected and goal not in protected
+            for phase,base in enumerate(other.maze_layouts.grids):
+                for p_open in (False,True):
+                    grid = [row[:] for row in base]
+                    if other.puzzle_gate:
+                        x,y = other.puzzle_gate[0]
+                        grid[y][x] = int(not p_open)
+                    original = distances(grid,start)
+                    assert other.exit in original and other.spawn in original
+                    for index,route in enumerate(other.route_options):
+                        x,y = route.gate
+                        ox,oy = other.route_options[1-index].gate
+                        assert route.gate not in protected and grid[y][x] == 1
+                        grid[y][x] = 0
+                        assert grid[oy][ox] == 1 and other.maze_layouts.is_valid(grid)
+                        assert (route.path[0],route.path[-1]) == (start,goal)
+                        assert route.gate in route.path and route.distance < original[goal]
+                        assert distances(grid,start)[goal] == route.distance
+                        assert distances(grid,goal)[other.exit] >= 8
+                        assert all(other.can_stand(cx+.5,cy+.5,grid) for cx,cy in route.path)
+                        assert all(math.dist(a,b)==1 for a,b in zip(route.path,route.path[1:]))
+                        grid[y][x] = 1
+    assert len(set(seed for seed,_ in generated)) >= 3 and {run for _,run in generated}=={0,1,2}
+    print(f'PASS: generated independent route pairs on {len(generated)}/24 seed/runs; both gates checked in all six terrains.')
     print('PASS: seed 117/run 0, all 6 phase/P-gate layouts: ordinary 16, exposure route 12/5 centres, cover route 14/0; selected gate walkable, other gate closed, ordinary exit retained, 20 cells remain and source layouts unchanged.')
 
 

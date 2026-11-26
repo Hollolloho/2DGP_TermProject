@@ -1,5 +1,6 @@
 """두 함정 렌더러의 같은 SDL 프로세스 내 독립성 검사. 창 없이 실행한다."""
 import ctypes
+import math
 import os
 from pathlib import Path
 
@@ -73,7 +74,7 @@ def run(output=None):
             room.time, room.x, room.z = 9., .6, 12.
             room.ball_z, room.ball_distance, room.ball_speed = 5., 8., 3.7
             for rear in (False, True):
-                room.look_back = rear
+                room.yaw = math.pi if rear else 0.
                 boulder.draw(room)
                 reference = pixels(boulder.canvas, width, height)
                 assert len(set(reference[::4])) > 30, 'blank boulder reference'

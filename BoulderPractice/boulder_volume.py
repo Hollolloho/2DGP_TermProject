@@ -3,7 +3,7 @@
 No 3D engine, ray casting or gameplay rules. Geometry/UVs stay attached to the
 stone; camera translation and forward/rear views project the same world surface.
 """
-import ctypes
+from SourceCode.first_person import submit_mesh
 import math
 
 
@@ -12,7 +12,7 @@ def normalize(x,y,z):
     return x/length,y/length,z/length
 
 
-def stone_mesh(radius,rings=36,segments=80):
+def stone_mesh(radius,rings=36,segments=80,fractures=()):
     vertices=[];indices=[]
     for row in range(rings+1):
         lat=(row/rings-.5)*math.pi
@@ -24,6 +24,10 @@ def stone_mesh(radius,rings=36,segments=80):
             broad=(abs(x)**2.18+abs(y)**2.18+abs(z)**2.18)**(-1/2.18)
             rough=1+.024*math.sin(3*x+1.2)*math.sin(4*y-.4)*math.sin(3*z+2)+.007*math.cos(9*x-5*y+6*z)
             r=radius*broad*rough
+            for nx,ny,nz,depth in fractures:
+                dot = nx*x+ny*y+nz*z
+                if dot > 0:
+                    r = min(r, radius*depth/dot)
             vertices.append([x*r,y*r,z*r,col/segments,row/rings,0.,0.,0.])
     stride=segments+1
     for row in range(rings):
@@ -61,11 +65,24 @@ def rolled_pose(vertices,radius,distance,centre_z):
     world=[(x,y+centre_y,z+centre_z,u,v,nx,ny,nz) for x,y,z,u,v,nx,ny,nz in rotated]
     return world,centre_y,(lowest[0],0,lowest[2]+centre_z)
 
+def sloped_rolled_pose(vertices,radius,distance,centre_x,centre_z,slope,direction):
+    """Roll across a sloped x/y plane and keep the lowest mesh point tangent."""
+    angle=-direction*distance/radius
+    c,s=math.cos(angle),math.sin(angle)
+    rotated=[(c*x-s*y,s*x+c*y,z,u,v,c*nx-s*ny,s*nx+c*ny,nz)
+             for x,y,z,u,v,nx,ny,nz in vertices]
+    lowest=min(rotated,key=lambda vertex:vertex[1]-slope*vertex[0])
+    centre_y=slope*centre_x-(lowest[1]-slope*lowest[0])
+    world=[(x+centre_x,y+centre_y,z+centre_z,u,v,nx,ny,nz)
+           for x,y,z,u,v,nx,ny,nz in rotated]
+    contact_x=lowest[0]+centre_x
+    return world,centre_y,(contact_x,slope*contact_x,lowest[2]+centre_z)
+
 
 class Boulder:
-    def __init__(self,view,material,radius):
+    def __init__(self,view,material,radius,*,rings=36,segments=80,fractures=()):
         self.view=view;self.p=view.p;self.radius=radius
-        self.vertices,self.indices=stone_mesh(radius)
+        self.vertices,self.indices=stone_mesh(radius,rings,segments,fractures)
         self.max_radius=max(math.sqrt(x*x+y*y+z*z) for x,y,z,*_ in self.vertices)
         p=self.p
         # Mirrored wrapping makes the source edge continuous without editing the
@@ -91,45 +108,7 @@ class Boulder:
         return self.world
 
     def submit(self,g,texture,vertices,indices,cull=False):
-        """Batch triangles; clip near-plane crossings before projection."""
-        v=self.view;p=self.p
-        _,_,eye,cx,horizon=v.camera(g);direction=-1 if g.look_back else 1
-        camera=[];screen=[];packed=[]
-        for x,y,z,u,t,r,green,b,alpha in vertices:
-            x,y,z=direction*(x-g.x),y-eye,direction*(z-g.z)
-            camera.append((x,y,z,u,t,r,green,b,alpha))
-            if z>=.075:
-                px,py=cx+x*v.focal/z,horizon-y*v.focal/z
-                screen.append((px,py));packed.append(v.vertex.pack(px,py,r,green,b,alpha,u,t))
-            else:screen.append(None);packed.append(None)
-        output=[];count=0
-        for triangle in indices:
-            points=[screen[i] for i in triangle]
-            if all(point is not None for point in points):
-                a,b,c=points
-                if cull and (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0])<=0:continue
-                output.extend(packed[i] for i in triangle);count+=1
-                continue
-            poly=[camera[i] for i in triangle];clipped=[]
-            for a,b in zip(poly,poly[1:]+poly[:1]):
-                inside_a,inside_b=a[2]>=.075,b[2]>=.075
-                if inside_a:clipped.append(a)
-                if inside_a!=inside_b:
-                    t=(.075-a[2])/(b[2]-a[2]);clipped.append(tuple(a[i]+(b[i]-a[i])*t for i in range(9)))
-            for i in range(1,len(clipped)-1):
-                tri=[clipped[0],clipped[i],clipped[i+1]]
-                projected=[(cx+a[0]*v.focal/a[2],horizon-a[1]*v.focal/a[2]) for a in tri]
-                a,b,c=projected
-                if cull and (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0])<=0:continue
-                for (x,y),point in zip(projected,tri):
-                    output.append(v.vertex.pack(x,y,*(round(max(0,min(255,value))) for value in point[5:]),point[3],point[4]))
-                count+=1
-        if output:
-            raw=b''.join(output);buffer=ctypes.create_string_buffer(raw)
-            ptr=ctypes.cast(buffer,ctypes.POINTER(p.SDL_Vertex))
-            p.SDL_SetRenderDrawBlendMode(p.renderer,p.SDL_BLENDMODE_BLEND)
-            assert p.SDL_RenderGeometry(p.renderer,texture,ptr,len(output),None,0)==0,p.SDL_GetError()
-        return count
+        return submit_mesh(self.view,g,texture,vertices,indices,cull)
 
     def shadow(self,g):
         self.pose(g)
@@ -167,7 +146,7 @@ class Boulder:
 
     def dust(self,g,front):
         if g.state!='chasing' or g.ball_speed<.1:return
-        v=self.view;direction=-1 if g.look_back else 1
+        v=self.view;cosine,sine=v.view_axes
         latest=int(g.ball_distance/.38)
         for i in range(12):
             event=latest-i
@@ -176,9 +155,9 @@ class Boulder:
             age=delta/max(1,g.ball_speed)
             if age>1.1:continue
             z=g.ball_z-delta-.10
-            if (direction*(z-g.ball_z)<=0)!=front:continue
             side=-1 if event%2 else 1
             x=side*(self.radius*.74+age*.24)+math.sin(event*2.3)*.06
+            if (sine*x+cosine*(z-g.ball_z)<=0)!=front:continue
             dust=v.catalog['dust']['frames'][min(11,max(1,int(age/1.1*12)))]
             width=.35+age*.65
             v.billboard(g,'dust',dust['rect_top_left'],[256,230],[width,width*.5],x,z,(188,179,157))

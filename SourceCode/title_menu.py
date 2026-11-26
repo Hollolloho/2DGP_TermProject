@@ -1,5 +1,6 @@
 """게임 시작 전 타이틀과 조작법 화면."""
 import ctypes
+from .window_input import disable_text_input
 from time import perf_counter
 
 import pico2d.pico2d as p
@@ -17,7 +18,7 @@ CONTROLS = (
     ('좌클릭 드래그', '누른 채 움직여 마우스 미로 풀기'),
     ('F', '상호작용'),
     ('M', '방문 지도'),
-    ('Esc', '지도·퍼즐 닫기 / 칼날방 입장 전 복귀'),
+    ('Esc', '지도·퍼즐 닫기 / 함정방 입장 전 복귀'),
     ('R', '새 회차 시작'),
 )
 
@@ -91,6 +92,8 @@ def show_title_menu(project):
         choice = None
         # 화면 전환을 고른 뒤 같은 입력 묶음은 소비하고, 창 닫기는 끝까지 처리한다.
         while p.SDL_PollEvent(ctypes.byref(event)):
+            if event.type == p.SDL_WINDOWEVENT and event.window.event == p.SDL_WINDOWEVENT_FOCUS_GAINED:
+                disable_text_input(p)
             if event.type == p.SDL_QUIT or (event.type == p.SDL_WINDOWEVENT and
                                             event.window.event == p.SDL_WINDOWEVENT_CLOSE):
                 return False
@@ -144,11 +147,12 @@ def show_title_menu(project):
                 text(keys, 86, y, 20, GOLD)
                 text(description, 240, y, 20)
             text('탐색 중 Esc는 게임 종료', 240, 533, 20, MUTED)
-            text('칼날방', 86, 563, 27, GOLD)
+            text('함정방 · 칼날 A → B / 여섯 줄 돌방 C → D', 86, 563, 27, GOLD)
             text('W / S', 86, 610, 20, GOLD)
             text('전진·후진', 170, 610, 20)
             text('A / D', 305, 610, 20, GOLD)
             text('좌우 이동', 389, 610, 20)
+            text('마우스 좌우로 시선 회전', 550, 610, 20)
             draw_back(back)
             text('Enter / Esc', 306, 702, 20, MUTED)
         else:

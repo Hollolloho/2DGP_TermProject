@@ -17,7 +17,7 @@ def main():
     if not p.renderer:p.renderer=p.SDL_CreateRenderer(p.window,-1,p.SDL_RENDERER_SOFTWARE)
     p.SDL_HideWindow(p.window)
     new=current.View(p,w,h)
-    g=current.Practice();g.release();g.time=9;g.z=12;g.ball_z=5;g.ball_speed=3.7;g.ball_distance=8;g.look_back=True
+    g=current.Practice();g.release();g.time=9;g.z=12;g.ball_z=5;g.ball_speed=3.7;g.ball_distance=8;g.yaw=math.pi
     durations=[]
     try:
         ground_errors=[]
@@ -41,12 +41,12 @@ def main():
         for frame in range(48):
             t=frame/30
             g.time=9+t;g.z=12+2.55*t;g.ball_z=5+3.7*t;g.ball_distance=8+3.7*t
-            g.x=math.sin(t*2)*.8;g.look_back=True
+            g.x=math.sin(t*2)*.8;g.yaw=math.pi
             begin=time.perf_counter();new.draw(g);p.SDL_RenderPresent(p.renderer)
             durations.append((time.perf_counter()-begin)*1000)
         # Explicit near/crossing cases must clip without invalid geometry.
         for back in (False,True):
-            g.look_back=back
+            g.yaw=math.pi if back else 0.
             for delta in (-1.4,-.05,0,.05,1.4):
                 g.ball_z=g.z+delta;new.draw(g)
         info=p.SDL_RendererInfo();p.SDL_GetRendererInfo(p.renderer,info)
