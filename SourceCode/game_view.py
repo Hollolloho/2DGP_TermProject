@@ -647,7 +647,7 @@ class View:
 
     def hud_panel(self, rect, accent=None):
         x,y,w,h = rect
-        self.rectangle(x,y,w,h,(*ui.SURFACE,245))
+        self.rectangle(x,y,w,h,ui.SURFACE)
         self.line(x,y+h-1,x+w-1,y+h-1,ui.RULE)
         if accent is not None:self.rectangle(x,y,2,h,accent)
 
