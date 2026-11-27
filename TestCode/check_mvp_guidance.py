@@ -4,6 +4,7 @@ import math
 from unittest.mock import patch
 from SourceCode.maze_model import Game
 from SourceCode.game_view import View,GOAL_HUD_RECT,PHASE_HUD_RECT,LW,LH
+from SourceCode import ui_theme as ui
 
 
 def course():
@@ -24,7 +25,7 @@ def check_text():
     game.boulder_completed = True
     assert '다음 P 마우스 문' in ' '.join(View.course_recommendation(game))
     game.puzzle_reserved_phase = game.next_phase
-    assert View.course_recommendation(game) == ('P 예약됨','다음 밤에 열림')
+    assert View.course_recommendation(game) == ('다음 시간대에 P 문 이용',)
     game.puzzle_reserved_phase,game.puzzle_open = None,True
     assert 'L 석판 방에서' in ' '.join(View.course_recommendation(game))
     game.connection.completed = True
@@ -32,14 +33,14 @@ def check_text():
     game.path_completed = True
     assert 'U에서 두 경로 비교' in View.course_recommendation(game)
     game.shortcut_choice.select(1);game.shortcut_choice.confirm(game.next_phase)
-    assert View.course_recommendation(game) == ('2번 통로 예약','다음 밤에 열림')
+    assert View.course_recommendation(game) == ('다음 시간대에 2번 문 이용',)
     game.shortcut_choice.apply_phase(game.next_phase)
     assert View.course_recommendation(game) == ('2번 문 통과','중앙 로프에서 F')
     # 앞 단계를 건너뛰어도 이미 진행한 후속 단계로부터 이전 확인을 강요하지 않는다.
     skipped = course();skipped.path_completed = True
     assert 'U에서 두 경로 비교' in View.course_recommendation(skipped)
     skipped.shortcut_choice.select(0);skipped.shortcut_choice.confirm(skipped.next_phase)
-    assert '1번 통로 예약' in View.course_recommendation(skipped)
+    assert View.course_recommendation(skipped) == ('다음 시간대에 1번 문 이용',)
     for state in ('puzzle','trap','path_room','shifting','clear','failed'):
         game.state = state
         assert not View.course_recommendation(game)
@@ -98,7 +99,7 @@ def run(app):
             app.release_input();game.guard_hp = 0
             picture(app);game.ui_time += .4
             assert '목표: 중앙 로프에서 F 탈출' in labels(app)
-            assert app.view.text_cache['목표: 중앙 로프에서 F 탈출',(219,211,183),'font'].w <= 190
+            assert app.view.text_cache['목표: 중앙 로프에서 F 탈출',ui.TEXT,'font'].w <= 190
             press(app,p.SDLK_f)
             assert game.player.torch
             for _ in range(65):app.update(.05)
@@ -120,7 +121,7 @@ def run(app):
                 lines = View.course_recommendation(game)
                 for index,line in enumerate(lines):
                     text = ('추천: ' if index == 0 else '')+line
-                    assert app.view.text_cache[text,(200,206,182),'small'].w <= 190,(setup,text)
+                    assert app.view.text_cache[text,ui.MUTED,'small'].w <= 190,(setup,text)
             press(app,p.SDLK_m)
             assert not any(text.startswith(('목표:','추천:')) for text in labels(app))
             press(app,p.SDLK_ESCAPE)

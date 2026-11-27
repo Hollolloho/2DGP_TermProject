@@ -57,6 +57,8 @@ def run(app):
     check_game_hud(app)
     from .check_ui_layout import run as check_ui_layout
     check_ui_layout(app)
+    from .check_ui_hud import run as check_ui_hud
+    check_ui_hud(app)
     from .check_connection_render import run as check_connection_render
     check_connection_render(app)
     from .check_waypoint_render import run as check_waypoint_render
