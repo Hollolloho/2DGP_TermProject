@@ -32,6 +32,7 @@ PHASES = ('낮', '밤', '새벽')
 # 플레이테스트용 기본값. 최종 시간·연출 강도는 조정할 수 있다.
 PHASE_SECONDS, PHASE_WARNING_SECONDS = 60.0, 5.0
 SHIFT_SECONDS, SHIFT_SWAP_AT = .6, .3
+RETURN_REASON_SECONDS = 5.0
 TRAP_LENGTH, TRAP_HALF_WIDTH, TRAP_HEIGHT = 9.0, 1.6, 3.0
 TRAP_LATERAL, BLADE_RADIUS, PLAYER_RADIUS = 1.1, .34, .20
 TRAP_PLANES = (.30, .58, .82)
@@ -323,6 +324,7 @@ class Game:
         # UI·변형 연출 시계만 계속 움직이고, 변형 중 게임 세계 시계는 멈춘다.
         self.ui_time = self.shift_elapsed = 0.0
         self.phase_warning = self.shift_applied = False
+        self.shift_returned_from_room = False
         self.shift_cells = set()
         self.layout_revision = 0
         self.attack_time = 10.0
@@ -822,6 +824,7 @@ class Game:
 
     def start_shift(self):
         """시간대 경계에서 함정방을 빠져나오고 변형 상태에 들어간다."""
+        self.shift_returned_from_room = self.state in ('trap','path_room')
         if self.state == 'trap':
             self.return_from_trap()
         if self.state == 'path_room':
@@ -878,7 +881,11 @@ class Game:
             self.phase_time = 0.0
             self.phase_warning = False
             self.shift_cells.clear()
-            self.message(f'{PHASES[self.phase]} · 미로의 길이 바뀌었습니다')
+            if self.shift_returned_from_room:
+                self.message('시간대 전환으로 입장 위치 복귀',RETURN_REASON_SECONDS)
+            else:
+                self.message(f'{PHASES[self.phase]} · 미로의 길이 바뀌었습니다')
+            self.shift_returned_from_room = False
 
     def close_to(self, cell, radius=1.25):
         return math.hypot(self.player.x-cell[0]-.5, self.player.y-cell[1]-.5) <= radius and self.line_of_sight(*cell)
