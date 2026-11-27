@@ -1,0 +1,13 @@
+guardian.png adapts FLARE Skeleton Mod - Skeletal Knight by VWolfdog,
+based on Skeleton Warrior by Clint Bellanger (C) 2009.
+https://opengameart.org/content/flare-skeleton-mod-skeletal-knight
+https://opengameart.org/content/skeleton-warrior
+
+OpenGameArt lists the download under CC BY 3.0. The Blender source credits
+the base model under CC BY-SA 3.0 or later. This adapted sprite is shared
+under CC BY-SA 3.0.
+https://creativecommons.org/licenses/by-sa/3.0/
+
+The runtime atlas uses the first stance frame of SW, NW, SE and NE.
+The frames were resized, aligned to the game's foot pivot, and adjusted
+to remove the cast shadow and brighten midtones.

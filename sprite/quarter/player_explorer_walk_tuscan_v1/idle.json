@@ -1,0 +1,108 @@
+{
+  "schema": "explorer.pose.pico2d.v1",
+  "image": "idle.png",
+  "sheet_size": [
+    256,
+    64
+  ],
+  "frame_size": [
+    64,
+    64
+  ],
+  "pivot": [
+    32,
+    54
+  ],
+  "pivot_coordinates": "top-left; shared ground root",
+  "display_size_logical": [
+    64,
+    64
+  ],
+  "sampling": "nearest",
+  "finish": "hand-painted RGBA",
+  "direction_order": [
+    "sw",
+    "se",
+    "nw",
+    "ne"
+  ],
+  "clips": {
+    "idle-sw": {
+      "direction": "sw",
+      "frames": [
+        {
+          "rect": [
+            0,
+            0,
+            64,
+            64
+          ]
+        }
+      ],
+      "durations_ms": [
+        1000
+      ],
+      "loop": true,
+      "still_frame": 0
+    },
+    "idle-se": {
+      "direction": "se",
+      "frames": [
+        {
+          "rect": [
+            64,
+            0,
+            64,
+            64
+          ]
+        }
+      ],
+      "durations_ms": [
+        1000
+      ],
+      "loop": true,
+      "still_frame": 0
+    },
+    "idle-nw": {
+      "direction": "nw",
+      "frames": [
+        {
+          "rect": [
+            128,
+            0,
+            64,
+            64
+          ]
+        }
+      ],
+      "durations_ms": [
+        1000
+      ],
+      "loop": true,
+      "still_frame": 0
+    },
+    "idle-ne": {
+      "direction": "ne",
+      "frames": [
+        {
+          "rect": [
+            192,
+            0,
+            64,
+            64
+          ]
+        }
+      ],
+      "durations_ms": [
+        1000
+      ],
+      "loop": true,
+      "still_frame": 0
+    }
+  },
+  "production": {
+    "sw": "Exact approved idle-sw.png pixels retained.",
+    "se_nw_ne": "Whole-character ImageGen neutral stance. Generated lower body packed below logicaly35; corresponding walk frame00 head/torso/arms/props preserved pixel-for-pixel. No body transforms.",
+    "scope": "Candidate review pack only; main game loader is unchanged."
+  }
+}
