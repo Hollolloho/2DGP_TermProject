@@ -8,6 +8,7 @@ from .game_audio import Audio
 from .first_person import MouseLook, turned_yaw
 from .window_input import disable_text_input
 from .puzzle_layout import connection_cell, connection_piece_at, on_loose_floor
+from .ui_layout import window_to_logical
 
 
 class PlayMode:
@@ -116,9 +117,12 @@ class PlayMode:
                     self.view.capture(self.output/'manual.png')
                     self.game.message('output/topdown/manual.png 저장')
             elif event.type == p.SDL_MOUSEBUTTONDOWN and event.button.button == p.SDL_BUTTON_LEFT:
+                point = self.mouse_point(event.button)
+                if point is None:
+                    self.puzzle_mouse_held = True
+                    continue
                 if self.game.state in ('puzzle','path_room'):
                     if not self.puzzle_mouse_held:
-                        point = self.mouse_point(event.button)
                         if self.game.state == 'path_room':
                             self.view.connection_pointer = point
                             index = connection_piece_at(self.game.connection,point)
@@ -137,9 +141,13 @@ class PlayMode:
                 elif not self.puzzle_mouse_held:
                     self.game.attack()
             elif event.type == p.SDL_MOUSEBUTTONUP and event.button.button == p.SDL_BUTTON_LEFT:
+                point = self.mouse_point(event.button)
+                if point is None:
+                    self.game.cancel_puzzle_drag()
+                    self.view.connection_pointer = None
                 if self.game.state == 'path_room' and self.puzzle_mouse_held:
-                    point = self.mouse_point(event.button)
-                    self.game.drop_connection(connection_cell(point),shelf=on_loose_floor(point))
+                    if point is not None:
+                        self.game.drop_connection(connection_cell(point),shelf=on_loose_floor(point))
                 self.game.puzzle.release()
                 self.puzzle_mouse_held = False
             elif event.type == p.SDL_MOUSEMOTION:
@@ -157,7 +165,7 @@ class PlayMode:
                     point = self.mouse_point(event.motion)
                     if self.game.state == 'path_room':
                         self.view.connection_pointer = point
-                    elif self.game.puzzle_tab == 'maze':
+                    elif point is not None and self.game.puzzle_tab == 'maze':
                         self.game.drag_puzzle(point)
 
         if not self.smoke and not p.SDL_GetWindowFlags(p.window) & p.SDL_WINDOW_INPUT_FOCUS:
@@ -168,8 +176,10 @@ class PlayMode:
     def mouse_point(self, event):
         width, height = ctypes.c_int(), ctypes.c_int()
         p.SDL_GetWindowSize(p.window, ctypes.byref(width), ctypes.byref(height))
+        point = window_to_logical((event.x,event.y),(width.value,height.value),self.view.output_size())
+        if point is None:return None
         offset = PUZZLE_OFFSET_X if self.game.state == 'puzzle' and self.game.puzzle_tab == 'maze' else 0
-        return event.x*LW//max(1, width.value)-offset, event.y*LH//max(1, height.value)
+        return point[0]-offset,point[1]
 
     def update(self, dt):
         dx = int(p.SDLK_d in self.held)-int(p.SDLK_a in self.held)

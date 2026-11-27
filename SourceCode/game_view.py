@@ -14,8 +14,9 @@ from .mouse_maze import BOARD, MAZE, WAYPOINTS, GOAL_CELL, cell_center, cell_rec
 from .path_connection import DIRECTIONS as CONNECTION_DIRECTIONS, RUNES
 from .puzzle_layout import ROOM_ORIGIN, ROOM_SCALE, room_point, connection_cell, on_loose_floor
 from .world_path_room import FIXED_FLOOR, LOOSE_POSITIONS, ENTER_SECONDS
+from .ui_layout import LOGICAL_WIDTH,LOGICAL_HEIGHT,fit_viewport
 
-LW, LH, SCALE = 640, 400, 2
+LW, LH, SCALE = LOGICAL_WIDTH, LOGICAL_HEIGHT, 2
 MAP_RECT = (0, 0, LW, LH)
 PHASE_HUD_RECT = (222, 8, 196, 28)
 GOAL_HUD_RECT = (8, 6, 206, 25)
@@ -1188,7 +1189,16 @@ class View:
             p.SDL_RenderCopy(p.renderer, self.logical, None, None)
         self.display_ready = native_trap
         p.SDL_SetRenderTarget(p.renderer, None)
-        p.SDL_RenderCopy(p.renderer, self.display if native_trap else self.logical, None, None)
+        self.clear((0,0,0,255))
+        viewport = fit_viewport(*self.output_size())
+        if viewport[2] and viewport[3]:
+            p.SDL_RenderCopy(p.renderer,self.display if native_trap else self.logical,None,p.SDL_Rect(*viewport))
+
+    @staticmethod
+    def output_size():
+        width,height = ctypes.c_int(),ctypes.c_int()
+        assert p.SDL_GetRendererOutputSize(p.renderer,ctypes.byref(width),ctypes.byref(height)) == 0
+        return width.value,height.value
 
     def select_readback_target(self):
         """Select the current frame as a 1280×800 texture for pixel readback."""

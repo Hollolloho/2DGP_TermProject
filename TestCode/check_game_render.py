@@ -14,6 +14,7 @@ from SourceCode.game_view import PUZZLE_OFFSET_X, PHASE_HUD_RECT
 from SourceCode.trap_view import project as project_trap
 from SourceCode.mouse_maze import BOARD, MAZE, START_CELL, GOAL_CELL, cell_center
 from .mouse_maze_fixture import legacy_mouse_maze
+from SourceCode.ui_layout import logical_to_window
 
 
 def inject_key(key, down=True):
@@ -37,8 +38,9 @@ def inject_mouse(event_type, point, held=True):
     event.type = event_type
     width, height = ctypes.c_int(), ctypes.c_int()
     p.SDL_GetWindowSize(p.window, ctypes.byref(width), ctypes.byref(height))
-    x = (int(point[0])*width.value+LW-1)//LW
-    y = (int(point[1])*height.value+LH-1)//LH
+    output_width,output_height = ctypes.c_int(),ctypes.c_int()
+    assert p.SDL_GetRendererOutputSize(p.renderer,ctypes.byref(output_width),ctypes.byref(output_height)) == 0
+    x,y = logical_to_window(point,(width.value,height.value),(output_width.value,output_height.value))
     if event_type == p.SDL_MOUSEMOTION:
         event.motion.x, event.motion.y = x, y
         event.motion.state = p.SDL_BUTTON_LMASK if held else 0
@@ -53,6 +55,8 @@ def run(app):
     check_boulder_render(app)
     from .check_game_hud import run as check_game_hud
     check_game_hud(app)
+    from .check_ui_layout import run as check_ui_layout
+    check_ui_layout(app)
     from .check_connection_render import run as check_connection_render
     check_connection_render(app)
     from .check_waypoint_render import run as check_waypoint_render
