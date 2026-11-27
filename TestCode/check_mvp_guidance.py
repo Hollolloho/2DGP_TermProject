@@ -1,8 +1,9 @@
 """목표와 선택 가능한 검수 코스 추천. 모델 기록을 바꾸지 않고 기존 상태를 읽는다."""
 import ctypes
+import math
 from unittest.mock import patch
 from SourceCode.maze_model import Game
-from SourceCode.game_view import View,GOAL_HUD_RECT,PHASE_HUD_RECT
+from SourceCode.game_view import View,GOAL_HUD_RECT,PHASE_HUD_RECT,LW,LH
 
 
 def course():
@@ -63,14 +64,26 @@ def run(app):
     from .check_game_render import regain_focus
     original = app.game
     original_course = app.test_course
-    def capture(name,width,height):
+    def capture(name,width,height,glyph=None):
+        world_clock = app.game.time,app.game.phase_time,app.game.guard_attack_at,app.game.attack_time
         picture(app)
+        # 새 검사 인스턴스의 화면 전환만 끝낸다. 공격·물리·시간대 시계는 유지한다.
+        app.game.ui_time += .4
+        picture(app)
+        assert world_clock == (app.game.time,app.game.phase_time,app.game.guard_attack_at,app.game.attack_time)
         actual_width,actual_height = ctypes.c_int(),ctypes.c_int()
         assert p.SDL_GetRendererOutputSize(p.renderer,ctypes.byref(actual_width),ctypes.byref(actual_height)) == 0
         assert (actual_width.value,actual_height.value) == (width,height)
         data = (ctypes.c_ubyte*(width*height*4))()
         rect = p.SDL_Rect(0,0,width,height)
         assert p.SDL_RenderReadPixels(p.renderer,ctypes.byref(rect),p.SDL_PIXELFORMAT_RGBA32,data,width*4) == 0
+        assert len(set(data[::4])) > 16,'capture is still covered by the transition fade'
+        if glyph is not None:
+            (x,y,w,h),color = glyph
+            count = sum(tuple(data[(row*width+col)*4:(row*width+col)*4+3]) == color
+                        for row in range(round(y*height/LH),round((y+h)*height/LH))
+                        for col in range(round(x*width/LW),round((x+w)*width/LW)))
+            assert count >= 12,(name,'HUD glyph pixels missing',count)
         surface = p.SDL_CreateRGBSurfaceWithFormatFrom(data,width,height,32,width*4,p.SDL_PIXELFORMAT_RGBA32)
         assert surface
         try:assert p.IMG_SavePNG(surface,str(app.output/name).encode('utf-8')) == 0
@@ -139,6 +152,48 @@ def run(app):
             assert '목표: 중앙 로프에서 F 탈출' in text and not any(value.startswith('추천:') for value in text)
             capture(f'mvp-guidance-general-{width}.png',width,height)
             print(f'PASS: {width}x{height} SDL torch changes course recommendation, all guidance text fits, map/warning hiding, R reset and general-only goal; no fog/visit changes.')
+            # 같은 공격 예고를 실제 AI 갱신으로 만들고 두 퍼즐 화면에서 확인한다.
+            app.test_course = True
+            for kind in ('choice','maze'):
+                app.game = game = Game(117,player_clips=app.view.player_catalog['clips'],test_course=True)
+                app.release_input()
+                cell = game.choice_start if kind == 'choice' else game.puzzle_gate[1]
+                game.player.x,game.player.y = cell[0]+.5,cell[1]+.5
+                game.guard = cell;game.update_visibility();press(app,p.SDLK_f)
+                assert game.state == 'puzzle' and game.puzzle_tab == kind
+                app.update(.02)
+                assert game.guard_attack_at is not None
+                assert '수호자 공격 예고' in labels(app)
+                if kind == 'choice':
+                    title = app.view.text_cache['숏컷 경로 선택',(232,217,180),'title']
+                    warning = app.view.text_cache['수호자 공격 예고',(239,164,109),'font']
+                    assert 320+title.w/2+8 < 480-warning.w/2
+                    capture(f'mvp-guidance-choice-warning-{width}.png',width,height,
+                            ((420,51,120,20),(239,164,109)))
+            # 실제 SDL 상대 이동으로 옆과 뒤를 봐도 좌우 기준은 입장 정면이다.
+            app.game = game = Game(117,player_clips=app.view.player_catalog['clips'],test_course=True)
+            app.release_input();game.guard_hp = 0
+            x,y = game.boulder_entry;game.player.x,game.player.y = x+.5,y+.5
+            game.update_visibility();press(app,p.SDLK_f)
+            assert game.state == 'trap' and game.trap_kind == 'boulder'
+            room = game.boulder_room
+            original_position = room.x,room.z
+            def motion(relative_x):
+                event=p.SDL_Event();event.type=p.SDL_MOUSEMOTION;event.motion.xrel=relative_x
+                assert p.SDL_PushEvent(event)==1
+                app.handle_events()
+            motion(0)
+            for quarter in (1,2):
+                motion(600)
+                assert abs(abs(room.yaw)-quarter*math.pi/2) < 1e-6
+                assert (room.x,room.z) == original_position
+                text = labels(app)
+                status = next(value for value in text if '(입장 방향 기준)' in value)
+                assert '왼쪽 → 오른쪽' in status
+                assert app.view.text_cache[status,(228,204,153),'font'].w < 440
+            capture(f'mvp-guidance-boulder-back-{width}.png',width,height,
+                    ((12,350,450,24),(228,204,153)))
+            print(f'PASS: {width}x{height} actual guardian windup is visible on both puzzle panels; SDL 90/180 look keeps entry-relative rock direction and clear HUD spacing.')
     finally:
         p.SDL_SetWindowSize(p.window,1280,800)
         app.test_course = original_course

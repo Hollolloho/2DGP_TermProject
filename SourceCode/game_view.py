@@ -609,7 +609,7 @@ class View:
             status = '여섯 구간 통과 · 정면 출구로 이동'
         else:
             arrow = '왼쪽 → 오른쪽' if lane%2 == 0 else '오른쪽 → 왼쪽'
-            status = f'다음 {lane+1}/{LANE_COUNT} 구간 · {arrow}'
+            status = f'다음 {lane+1}/{LANE_COUNT} 구간 · {arrow} (입장 방향 기준)'
         self.text(status,16,361,(228,204,153),size='font')
         self.text(f'돌 주기 {CYCLE_SECONDS:.2f}초',472,361,(227,158,111),size='font')
         self.text('시선 기준 W/S 전후  A/D 좌우  Shift 달리기  마우스 회전  Esc 복귀',16,382,(202,199,179))
@@ -784,6 +784,10 @@ class View:
             self.text(game.banner,320,top+13,(225,208,164),size='font',center=True)
         self.hud_guidance(game)
 
+    def puzzle_attack_warning(self, game, x, y, *, center=False):
+        if game.guard_attack_at is not None:
+            self.text('수호자 공격 예고',x,y,(239,164,109),size='font',center=center)
+
     def shortcut_overlay(self, game):
         self.rectangle(0,37,LW,305,(0,0,0,175))
         self.text('숏컷 경로 선택',320,61,(232,217,180),size='title',center=True)
@@ -828,6 +832,7 @@ class View:
                   (245,211,143) if enabled else (136,144,132),size='hud_font',center=True)
         self.text('카드 클릭은 임시 선택 · 확정 후 변경 불가 · Esc 닫기',320,334,center=True)
         self.text('붉은 점: 현재 수호자 위치·예정 지형 기준 · 수호자가 이동하면 다른 길에서도 마주칠 수 있음',365,383,center=True)
+        self.puzzle_attack_warning(game,480,61,center=True)
 
     def puzzle_overlay(self, game):
         self.rectangle(0,37,LW,LH-37,(0,0,0,130))
@@ -857,8 +862,7 @@ class View:
         self.image('mouse-maze-panel', (16, 37, 488, 326))
         self.text('마우스 미로',66,68,parchment,size='title')
         self.text('Esc 닫기',394,68,muted,size='font')
-        if game.guard_attack_at is not None:
-            self.text('수호자 공격 예고',270,68,(239,164,109),size='font')
+        self.puzzle_attack_warning(game,270,68)
         self.text('좌클릭 드래그 · 1 → 2 → 3 → 도착' if WAYPOINTS else '좌클릭을 누른 채 도착까지 선 잇기',
                   66,94,parchment,size='font')
         if WAYPOINTS:
