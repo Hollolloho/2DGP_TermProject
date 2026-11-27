@@ -166,7 +166,7 @@ def run(app):
                 assert game.guard_attack_at is not None
                 assert '수호자 공격 예고' in labels(app)
                 if kind == 'choice':
-                    title = app.view.text_cache['숏컷 경로 선택',(232,217,180),'title']
+                    title = app.view.text_cache['숏컷 경로 선택',ui.TEXT,'title']
                     warning = app.view.text_cache['수호자 공격 예고',(239,164,109),'font']
                     assert 320+title.w/2+8 < 480-warning.w/2
                     capture(f'mvp-guidance-choice-warning-{width}.png',width,height,

@@ -59,6 +59,8 @@ def run(app):
     check_ui_layout(app)
     from .check_ui_hud import run as check_ui_hud
     check_ui_hud(app)
+    from .check_ui_panels import run as check_ui_panels
+    check_ui_panels(app)
     from .check_connection_render import run as check_connection_render
     check_connection_render(app)
     from .check_waypoint_render import run as check_waypoint_render

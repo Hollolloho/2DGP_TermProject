@@ -5,6 +5,7 @@ import pico2d.pico2d as p
 from SourceCode.maze_model import Game,PHASE_SECONDS,shortest_path
 from SourceCode.shortcut_choice import CHOICE_START,CHOICE_GOAL
 from SourceCode.game_view import CHOICE_CARD_RECTS,CHOICE_CONFIRM_RECT
+from SourceCode import ui_theme as ui
 from .check_game_render import inject_mouse, regain_focus
 from .check_boulder_render import keys,press,picture,pixels,labels
 
@@ -83,7 +84,7 @@ def run(app):
             frame = pixels(app)
             for x,y,w,h in CHOICE_CARD_RECTS:
                 color = tuple(frame[(round(y)*2*1280+round(x)*2)*4:][:3])
-                assert color == ((239,197,119) if CHOICE_CARD_RECTS[index] == (x,y,w,h) else (103,109,97))
+                assert color == (ui.BRASS if CHOICE_CARD_RECTS[index] == (x,y,w,h) else ui.RULE)
             capture(f'choice-compare-{width}.png',width,height)
             press(app,p.SDLK_ESCAPE)
             assert game.state == 'explore' and game.shortcut_choice.preview == index

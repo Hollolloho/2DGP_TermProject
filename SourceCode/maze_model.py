@@ -1258,6 +1258,7 @@ class Game:
         self.map_open = False
         if self.player.hp == 0:
             self.fail()
+            self.message('수호자의 공격으로 체력을 모두 잃었습니다',8)
         else:
             self.message('수호자 피격 · F로 이어 풀기' if was_puzzling else '수호자 피격')
 
@@ -1330,6 +1331,7 @@ class Game:
                     self.player.hp = max(0, self.player.hp-20)
                     if self.player.hp == 0:
                         self.fail()
+                        self.message('칼날에 맞아 체력을 모두 잃었습니다',8)
                         return
                     self.trap_progress = max(0,plane-.06)
                     self.trap_velocity = -.5

@@ -3,7 +3,7 @@ import ctypes
 import json
 import pico2d.pico2d as p
 from .maze_model import Game
-from .game_view import View, LW, LH, PUZZLE_OFFSET_X, CHOICE_CARD_RECTS, CHOICE_CONFIRM_RECT
+from .game_view import View, LW, LH, PUZZLE_OFFSET_X, CHOICE_CARD_RECTS, CHOICE_CONFIRM_RECT, RESULT_RESTART_RECT
 from .game_audio import Audio
 from .first_person import MouseLook, turned_yaw
 from .window_input import disable_text_input
@@ -26,6 +26,7 @@ class PlayMode:
             self.game.interact()
         self.held = set()
         self.puzzle_mouse_held = False
+        self.choice_owner = None
         self.focused = self.smoke or bool(p.SDL_GetWindowFlags(p.window) & p.SDL_WINDOW_INPUT_FOCUS)
         self.mouse_inside = self.smoke or bool(p.SDL_GetWindowFlags(p.window) & p.SDL_WINDOW_MOUSE_FOCUS)
         self.mouse = MouseLook(p)
@@ -35,6 +36,11 @@ class PlayMode:
     def new_game(self, run_number=0):
         return Game(self.seed, run_number, self.view.player_catalog['clips'], test_course=self.test_course)
 
+    def restart(self):
+        self.game = self.new_game(self.game.run_number+1)
+        self.release_input()
+        self.sync_mouse()
+
     def release_input(self):
         self.held.clear()
         self.game.cancel_puzzle_drag()
@@ -42,6 +48,39 @@ class PlayMode:
         self.view.connection_pointer = None
         self.puzzle_mouse_held = False
         self.game.boulder_return_requested = self.game.boulder_exit_requested = False
+        self.view.choice_hover = None
+
+    def sync_choice_focus(self):
+        owner = self.game if self.game.state == 'puzzle' and self.game.puzzle_tab == 'choice' else None
+        if owner is not self.choice_owner:
+            self.choice_owner = owner
+            preview = owner.shortcut_choice.preview if owner is not None else None
+            self.view.choice_focus, self.view.choice_hover = preview if preview is not None else 0, None
+
+    @staticmethod
+    def choice_control_at(point):
+        if point is not None:
+            for index,(x,y,w,h) in enumerate((*CHOICE_CARD_RECTS,CHOICE_CONFIRM_RECT)):
+                if x <= point[0] < x+w and y <= point[1] < y+h:return index
+        return None
+
+    def choice_key(self, key, modifiers):
+        if self.choice_owner is None or key not in (p.SDLK_LEFT,p.SDLK_RIGHT,p.SDLK_UP,p.SDLK_DOWN,
+                                                   p.SDLK_TAB,p.SDLK_RETURN,p.SDLK_KP_ENTER):
+            return False
+        if self.game.choice_confirm_requested:return True
+        focus = self.view.choice_focus
+        if key == p.SDLK_TAB:
+            focus = (focus+(-1 if modifiers & p.KMOD_SHIFT else 1)) % 3
+        elif key in (p.SDLK_LEFT,p.SDLK_RIGHT):
+            focus = (0 if key == p.SDLK_LEFT else 1) if focus == 2 else 1-focus
+        elif key == p.SDLK_UP:
+            focus = self.game.shortcut_choice.preview if self.game.shortcut_choice.preview is not None else 0
+        elif key == p.SDLK_DOWN:focus = 2
+        elif focus < 2:self.game.select_shortcut(focus)
+        else:self.game.request_shortcut_confirmation()
+        self.view.choice_focus, self.view.choice_hover = focus, None
+        return True
 
     def sync_mouse(self):
         self.mouse.capture(self.running and self.focused and self.mouse_inside and self.game.state == 'trap')
@@ -50,6 +89,7 @@ class PlayMode:
         self.sync_mouse()
         event = p.SDL_Event()
         while p.SDL_PollEvent(ctypes.byref(event)):
+            self.sync_choice_focus()
             if event.type == p.SDL_QUIT:
                 self.running = False
             elif event.type == p.SDL_WINDOWEVENT and event.window.event == p.SDL_WINDOWEVENT_FOCUS_LOST:
@@ -62,6 +102,7 @@ class PlayMode:
                 self.sync_mouse()
             elif event.type == p.SDL_WINDOWEVENT and event.window.event in (p.SDL_WINDOWEVENT_ENTER,p.SDL_WINDOWEVENT_LEAVE):
                 self.mouse_inside = event.window.event == p.SDL_WINDOWEVENT_ENTER
+                if not self.mouse_inside:self.view.choice_hover = None
                 if not self.mouse_inside and self.game.state == 'trap':
                     self.release_input()
                 self.sync_mouse()
@@ -73,6 +114,11 @@ class PlayMode:
                 if event.key.repeat:
                     continue
                 key = event.key.keysym.sym
+                if self.game.state in ('clear','failed') and key in (p.SDLK_RETURN,p.SDLK_KP_ENTER):
+                    self.restart()
+                    continue
+                if self.choice_key(key,event.key.keysym.mod):
+                    continue
                 if key == p.SDLK_r and self.game.state == 'path_room':
                     self.game.rotate_connection()
                     continue
@@ -86,6 +132,7 @@ class PlayMode:
                 if key == p.SDLK_ESCAPE:
                     if self.game.map_open:
                         self.game.map_open = False
+                        self.held.clear()
                     elif self.game.state == 'path_room':
                         self.game.return_from_path()
                     elif self.game.state == 'puzzle':
@@ -110,18 +157,25 @@ class PlayMode:
                 elif key == p.SDLK_v and self.game.state == 'explore':
                     self.game.reveal_all = not self.game.reveal_all
                 elif key == p.SDLK_r:
-                    self.game = self.new_game(self.game.run_number+1)
-                    self.release_input()
-                    self.sync_mouse()
+                    self.restart()
                 elif key == p.SDLK_F10:
                     self.view.capture(self.output/'manual.png')
                     self.game.message('output/topdown/manual.png 저장')
             elif event.type == p.SDL_MOUSEBUTTONDOWN and event.button.button == p.SDL_BUTTON_LEFT:
                 point = self.mouse_point(event.button)
+                if self.choice_owner is not None:
+                    control = self.choice_control_at(point)
+                    if control is not None and not self.game.choice_confirm_requested:
+                        self.view.choice_focus = control
+                    self.view.choice_hover = control
                 if point is None:
                     self.puzzle_mouse_held = True
                     continue
-                if self.game.state in ('puzzle','path_room'):
+                if self.game.state in ('clear','failed'):
+                    x,y,w,h = RESULT_RESTART_RECT
+                    if x <= point[0] < x+w and y <= point[1] < y+h:self.restart()
+                    self.puzzle_mouse_held = True
+                elif self.game.state in ('puzzle','path_room'):
                     if not self.puzzle_mouse_held:
                         if self.game.state == 'path_room':
                             self.view.connection_pointer = point
@@ -129,12 +183,8 @@ class PlayMode:
                             if index is not None:
                                 self.game.pick_connection(index)
                         elif self.game.puzzle_tab == 'choice':
-                            for index,(x,y,w,h) in enumerate(CHOICE_CARD_RECTS):
-                                if x <= point[0] < x+w and y <= point[1] < y+h:
-                                    self.game.select_shortcut(index)
-                            x,y,w,h = CHOICE_CONFIRM_RECT
-                            if x <= point[0] < x+w and y <= point[1] < y+h:
-                                self.game.request_shortcut_confirmation()
+                            if control in (0,1):self.game.select_shortcut(control)
+                            elif control == 2:self.game.request_shortcut_confirmation()
                         else:
                             self.game.puzzle.press(point)
                     self.puzzle_mouse_held = True
@@ -151,6 +201,8 @@ class PlayMode:
                 self.game.puzzle.release()
                 self.puzzle_mouse_held = False
             elif event.type == p.SDL_MOUSEMOTION:
+                if self.choice_owner is not None:
+                    self.view.choice_hover = self.choice_control_at(self.mouse_point(event.motion))
                 if self.game.state == 'trap':
                     delta = self.mouse.delta(event.motion)
                     if self.game.trap_kind == 'boulder':
@@ -172,6 +224,7 @@ class PlayMode:
             self.focused = False
             self.release_input()
         self.sync_mouse()
+        self.sync_choice_focus()
 
     def mouse_point(self, event):
         width, height = ctypes.c_int(), ctypes.c_int()
@@ -191,6 +244,7 @@ class PlayMode:
         self.game.update(dt,dx,dy,bool(self.held & {p.SDLK_LSHIFT,p.SDLK_RSHIFT}))
         if previous!=self.game.state:
             self.held.clear()
+        self.sync_choice_focus()
         self.sync_mouse()
         if not self.smoke:
             self.audio.update(self.game)
