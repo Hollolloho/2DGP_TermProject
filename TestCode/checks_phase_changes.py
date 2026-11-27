@@ -1,7 +1,7 @@
 """시간대 변형의 연결성·충돌·안전 복귀·기록·자원 유지 검사. SDL 창 없이 실행한다."""
 import math
 from SourceCode.maze_model import (Game, COLS, ROWS, DIRECTIONS, PHASE_SECONDS,
-                                   PHASE_WARNING_SECONDS, SHIFT_SWAP_AT, GUARD_DAMAGE, distances)
+                                   PHASE_WARNING_SECONDS, SHIFT_SWAP_AT, GUARD_DAMAGE, RETURN_REASON_SECONDS, distances)
 from SourceCode.mouse_maze import BOARD, MAZE, START_CELL, GOAL_CELL, MouseMaze, cell_at, cell_center
 from .mouse_maze_fixture import legacy_mouse_maze
 
@@ -144,6 +144,44 @@ def check_phase_changes():
         game.update(.05)
         assert math.isclose(game.player.stamina, 20.4 if phase == 2 else 20.)
     print('PASS: 96 starts, 288 layouts, 480 transitions; routes, one swap, frozen world, safe relocation, exact trap return, phase maps and resources.')
+    check_return_guidance()
+
+
+def check_return_guidance():
+    reason = '시간대 전환으로 입장 위치 복귀'
+    for course in (False,True):
+        for room in ('blade','boulder','path-entering','path-active'):
+            game = Game(117,test_course=course)
+            cell = (game.trap_cell if room == 'blade' else game.boulder_entry if room == 'boulder' else game.path_entry)
+            game.player.x,game.player.y = cell[0]+.45,cell[1]+.55
+            game.player.direction = 2
+            game.guard_hp = 0
+            game.update_visibility()
+            game.puzzle_reserved_phase = game.next_phase
+            saved = game.player.x,game.player.y,game.player.direction
+            game.interact()
+            if room.startswith('path'):
+                assert game.state == 'path_room'
+                for _ in range(21 if room == 'path-active' else 4):game.update(.05)
+                assert game.world_path.stage == ('active' if room == 'path-active' else 'entering')
+            else:
+                assert game.state == 'trap' and game.trap_kind == room
+            resources = game.player.hp,game.player.stamina
+            before = game.time
+            start_shift(game)
+            assert game.shift_returned_from_room and game.state == 'shifting'
+            assert (game.player.x,game.player.y,game.player.direction) == saved
+            finish_shift(game)
+            assert game.state == 'explore' and (game.player.x,game.player.y,game.player.direction) == saved
+            assert (game.player.hp,game.player.stamina) == resources and game.time == before
+            assert game.banner == reason and math.isclose(game.banner_until-game.time,RETURN_REASON_SECONDS)
+            assert not game.shift_returned_from_room and game.puzzle_open
+            assert not game.solid(*game.puzzle_gate[0])
+            # 다음 일반 전환에 지난 복귀 이유를 다시 표시하지 않는다.
+            start_shift(game);finish_shift(game)
+            assert game.banner != reason and '미로의 길이 바뀌었습니다' in game.banner
+            assert not Game(117,test_course=course).shift_returned_from_room
+    print('PASS: general/course blade, boulder and entering/active slab rooms show the 5s phase-return reason after transformation; exact position/facing, resources and P opening preserved; no stale reason on normal shift/new run.')
 
 
 @legacy_mouse_maze

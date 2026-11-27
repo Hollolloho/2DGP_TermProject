@@ -18,6 +18,7 @@ from .world_path_room import FIXED_FLOOR, LOOSE_POSITIONS, ENTER_SECONDS
 LW, LH, SCALE = 640, 400, 2
 MAP_RECT = (0, 0, LW, LH)
 PHASE_HUD_RECT = (222, 8, 196, 28)
+GOAL_HUD_RECT = (8, 6, 206, 25)
 VITALS_HUD_RECT = (15, 348, 138, 44)
 PUZZLE_OFFSET_X = 60
 BOULDER_SIGN_SCALE = .125
@@ -608,7 +609,7 @@ class View:
             status = '여섯 구간 통과 · 정면 출구로 이동'
         else:
             arrow = '왼쪽 → 오른쪽' if lane%2 == 0 else '오른쪽 → 왼쪽'
-            status = f'다음 {lane+1}/{LANE_COUNT} 구간 · {arrow}'
+            status = f'다음 {lane+1}/{LANE_COUNT} 구간 · {arrow} (입장 방향 기준)'
         self.text(status,16,361,(228,204,153),size='font')
         self.text(f'돌 주기 {CYCLE_SECONDS:.2f}초',472,361,(227,158,111),size='font')
         self.text('시선 기준 W/S 전후  A/D 좌우  Shift 달리기  마우스 회전  Esc 복귀',16,382,(202,199,179))
@@ -687,6 +688,50 @@ class View:
             if fill:
                 self.rectangle(40,y-height/2,fill,height,color)
 
+    @staticmethod
+    def course_recommendation(game):
+        if (not game.test_course or game.state != 'explore' or game.map_open
+                or game.phase_warning or game.guard_attack_at is not None):
+            return ()
+        if game.time < game.banner_until and not game.banner.startswith('횃불에 접근해 F'):
+            return ()
+        choice = game.shortcut_choice
+        if choice.opened:
+            return (f'{choice.selected+1}번 문 통과','중앙 로프에서 F')
+        if choice.selected is not None:
+            return (f'{choice.selected+1}번 통로 예약',f'다음 {PHASES[choice.reserved_phase]}에 열림')
+        if game.path_completed:
+            return ('길의 방 통과','U에서 두 경로 비교')
+        if choice.preview is not None:
+            return ('U에서 두 경로 비교',)
+        if game.connection.completed:
+            return ('L 석판 연결됨','다시 들어가 맞은편까지 걷기')
+        if game.puzzle_open:
+            return ('P 통과 · L 석판 방에서','연결 후 직접 걷기')
+        if game.puzzle_reserved_phase is not None:
+            return ('P 예약됨',f'다음 {PHASES[game.puzzle_reserved_phase]}에 열림')
+        if game.puzzle.progress:
+            return ('P 마우스 문 풀이 계속',)
+        if game.boulder_completed:
+            return ('D 도착 · 다음 P 마우스 문',)
+        if game.trap_completed:
+            return ('B 도착 · 다음 C 돌방',)
+        if game.player.torch:
+            return ('A 칼날방',)
+        return ('횃불에 다가가 F',)
+
+    def hud_guidance(self, game):
+        if (game.state != 'explore' or game.map_open or game.phase_warning
+                or game.guard_attack_at is not None):
+            return
+        self.hud_panel(GOAL_HUD_RECT)
+        self.text('목표: 중앙 로프에서 F 탈출',16,18,(219,211,183),size='font')
+        lines = self.course_recommendation(game)
+        if lines and self.interaction_hint(game) is None:
+            self.hud_panel((8,36,206,10+15*len(lines)))
+            for index,line in enumerate(lines):
+                self.text(('추천: ' if index == 0 else '')+line,16,46+index*15,(200,206,182))
+
     def hud(self, game, fps=0):
         remaining = max(0., PHASE_SECONDS-game.phase_time)
         warning = game.phase_warning or game.state == 'shifting'
@@ -737,6 +782,11 @@ class View:
             top = (92 if puzzle_status else 68) if choice.selected is not None else 68 if puzzle_status else 52
             self.hud_panel((80,top,480,26))
             self.text(game.banner,320,top+13,(225,208,164),size='font',center=True)
+        self.hud_guidance(game)
+
+    def puzzle_attack_warning(self, game, x, y, *, center=False):
+        if game.guard_attack_at is not None:
+            self.text('수호자 공격 예고',x,y,(239,164,109),size='font',center=center)
 
     def shortcut_overlay(self, game):
         self.rectangle(0,37,LW,305,(0,0,0,175))
@@ -782,6 +832,7 @@ class View:
                   (245,211,143) if enabled else (136,144,132),size='hud_font',center=True)
         self.text('카드 클릭은 임시 선택 · 확정 후 변경 불가 · Esc 닫기',320,334,center=True)
         self.text('붉은 점: 현재 수호자 위치·예정 지형 기준 · 수호자가 이동하면 다른 길에서도 마주칠 수 있음',365,383,center=True)
+        self.puzzle_attack_warning(game,480,61,center=True)
 
     def puzzle_overlay(self, game):
         self.rectangle(0,37,LW,LH-37,(0,0,0,130))
@@ -811,8 +862,7 @@ class View:
         self.image('mouse-maze-panel', (16, 37, 488, 326))
         self.text('마우스 미로',66,68,parchment,size='title')
         self.text('Esc 닫기',394,68,muted,size='font')
-        if game.guard_attack_at is not None:
-            self.text('수호자 공격 예고',270,68,(239,164,109),size='font')
+        self.puzzle_attack_warning(game,270,68)
         self.text('좌클릭 드래그 · 1 → 2 → 3 → 도착' if WAYPOINTS else '좌클릭을 누른 채 도착까지 선 잇기',
                   66,94,parchment,size='font')
         if WAYPOINTS:
