@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pico2d.pico2d as p
 from SourceCode.maze_model import Game
 from SourceCode.game_view import MAP_RECT, PHASE_HUD_RECT, VITALS_HUD_RECT
+from SourceCode import ui_theme as ui
 from .check_boulder_render import press, step, labels, pixels
 
 
@@ -32,7 +33,7 @@ def run(app):
             def rgb(x,y):
                 index = ((y*2)*1280+x*2)*4
                 return tuple(frame[index:index+3])
-            for y,height,value,color in ((356,6,hp,(155,76,59)),(370,4,stamina,(110,130,91))):
+            for y,height,value,color in ((356,6,hp,ui.HEALTH),(370,4,stamina,ui.STAMINA)):
                 for row in range(y-height//2,y+height//2):
                     for x in range(40,124):
                         expected = color if x < 40+round(84*value/100) else (35,32,29)
@@ -66,13 +67,13 @@ def run(app):
         assert not game.map_open and app.running
         game.puzzle_reserved_phase = game.next_phase
         texts = labels(app)
-        assert '다음 밤 개방 예정' in texts and 'F 퍼즐' not in texts
+        assert any('P 문 · 다음 밤 개방 예정' in text for text in texts) and 'F 퍼즐' not in texts
         view.capture(app.output/'hud/04-puzzle-reserved.png')
         game.puzzle_reserved_phase,game.puzzle_open = None,True
         wall = game.puzzle_gate[0]
         game.grid[wall[1]][wall[0]] = 0
         texts = labels(app)
-        assert '퍼즐 통로 개방됨' in texts and 'F 퍼즐' not in texts
+        assert any('P 문 개방' in text for text in texts) and 'F 퍼즐' not in texts
         view.capture(app.output/'hud/05-puzzle-open.png')
         game.phase_time,game.phase_warning = 55.,True
         assert '곧 밤 · 05초' in labels(app)

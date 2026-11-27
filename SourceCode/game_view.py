@@ -14,8 +14,10 @@ from .mouse_maze import BOARD, MAZE, WAYPOINTS, GOAL_CELL, cell_center, cell_rec
 from .path_connection import DIRECTIONS as CONNECTION_DIRECTIONS, RUNES
 from .puzzle_layout import ROOM_ORIGIN, ROOM_SCALE, room_point, connection_cell, on_loose_floor
 from .world_path_room import FIXED_FLOOR, LOOSE_POSITIONS, ENTER_SECONDS
+from .ui_layout import LOGICAL_WIDTH,LOGICAL_HEIGHT,fit_viewport
+from . import ui_theme as ui
 
-LW, LH, SCALE = 640, 400, 2
+LW, LH, SCALE = LOGICAL_WIDTH, LOGICAL_HEIGHT, 2
 MAP_RECT = (0, 0, LW, LH)
 PHASE_HUD_RECT = (222, 8, 196, 28)
 GOAL_HUD_RECT = (8, 6, 206, 25)
@@ -25,6 +27,7 @@ BOULDER_SIGN_SCALE = .125
 BOULDER_SIGN_HEIGHT = 20
 CHOICE_CARD_RECTS = ((40,108,272,174),(328,108,272,174))
 CHOICE_CONFIRM_RECT = (220,292,200,28)
+RESULT_RESTART_RECT = (200,268,240,36)
 WALL_NEIGHBORS = ((0, -1, 1), (1, 0, 2), (0, 1, 4), (-1, 0, 8))
 MEMORY_LIGHT = .32
 LIGHT_FADE_SECONDS = .20
@@ -73,6 +76,7 @@ class View:
         self.corridor = Corridor(self)
         self.boulder_scene = None
         self.connection_pointer = None
+        self.choice_focus, self.choice_hover = 0, None
         self.origin, self.world_scale = (0, 0), 1
         self.camera, self.camera_game = None, None
         self.light_game, self.light_time, self.torch_light = None, 0., 0.
@@ -138,7 +142,7 @@ class View:
         if alpha != 255:
             p.SDL_SetTextureAlphaMod(image.texture, 255)
 
-    def text(self, text, x, y, color=(199, 203, 189), size='small', center=False, right=False):
+    def text_image(self, text, color, size):
         key=(text,color,size)
         image=self.text_cache.get(key)
         if image is None:
@@ -153,6 +157,10 @@ class View:
             self.text_cache[key]=image
             if len(self.text_cache)>512:
                 self.text_cache.pop(next(iter(self.text_cache)))
+        return image
+
+    def text(self, text, x, y, color=ui.TEXT, size='small', center=False, right=False):
+        image = self.text_image(text,color,size)
         image.draw(x if center else x-image.w/2 if right else x+image.w/2,LH-y)
 
     def attack_frame_index(self, game):
@@ -637,18 +645,11 @@ class View:
         if game.phase_warning:
             self.text('곧 미로 변형 · 입장 전 위치로 복귀',190,69,(239,183,104),size='font')
 
-    def hud_panel(self, rect):
+    def hud_panel(self, rect, accent=None):
         x,y,w,h = rect
-        cut = 4
-        self.rectangle(x,y+cut,w,h-2*cut,(17,19,19))
-        for row in range(cut):
-            inset = cut-row
-            self.rectangle(x+inset,y+row,w-2*inset,1,(17,19,19))
-            self.rectangle(x+inset,y+h-1-row,w-2*inset,1,(17,19,19))
-        points = ((x+cut,y),(x+w-1-cut,y),(x+w-1,y+cut),(x+w-1,y+h-1-cut),
-                  (x+w-1-cut,y+h-1),(x+cut,y+h-1),(x,y+h-1-cut),(x,y+cut))
-        for start,end in zip(points,(*points[1:],points[0])):
-            self.line(*start,*end,(142,117,78))
+        self.rectangle(x,y,w,h,ui.SURFACE)
+        self.line(x,y+h-1,x+w-1,y+h-1,ui.RULE)
+        if accent is not None:self.rectangle(x,y,2,h,accent)
 
     def interaction_hint(self, game):
         if game.state != 'explore' or game.map_open:
@@ -674,16 +675,16 @@ class View:
         return None
 
     def hud_vitals(self, game):
-        def label(value, x, y, color=(235,224,200), right=False):
+        def label(value, x, y, color=ui.TEXT, right=False):
             self.text(value,x+1,y+1,(7,9,9),right=right)
             self.text(value,x,y,color,right=right)
 
-        for y,name,value,height,color in ((356,'HP',game.player.hp,6,(155,76,59)),
-                                          (370,'ST',game.player.stamina,4,(110,130,91))):
+        for y,name,value,height,color in ((356,'HP',game.player.hp,6,ui.HEALTH),
+                                          (370,'ST',game.player.stamina,4,ui.STAMINA)):
             label(name,16,y)
             label(f'{int(value):3d}',150,y,right=True)
             self.rectangle(39,y-height/2-1,86,height+2,(8,11,12))
-            self.rectangle(40,y-height/2,84,height,(35,32,29))
+            self.rectangle(40,y-height/2,84,height,ui.TRACK)
             fill = round(84*max(0.,min(1.,value/100)))
             if fill:
                 self.rectangle(40,y-height/2,fill,height,color)
@@ -699,7 +700,7 @@ class View:
         if choice.opened:
             return (f'{choice.selected+1}번 문 통과','중앙 로프에서 F')
         if choice.selected is not None:
-            return (f'{choice.selected+1}번 통로 예약',f'다음 {PHASES[choice.reserved_phase]}에 열림')
+            return (f'다음 시간대에 {choice.selected+1}번 문 이용',)
         if game.path_completed:
             return ('길의 방 통과','U에서 두 경로 비교')
         if choice.preview is not None:
@@ -709,7 +710,7 @@ class View:
         if game.puzzle_open:
             return ('P 통과 · L 석판 방에서','연결 후 직접 걷기')
         if game.puzzle_reserved_phase is not None:
-            return ('P 예약됨',f'다음 {PHASES[game.puzzle_reserved_phase]}에 열림')
+            return ('다음 시간대에 P 문 이용',)
         if game.puzzle.progress:
             return ('P 마우스 문 풀이 계속',)
         if game.boulder_completed:
@@ -724,88 +725,107 @@ class View:
         if (game.state != 'explore' or game.map_open or game.phase_warning
                 or game.guard_attack_at is not None):
             return
-        self.hud_panel(GOAL_HUD_RECT)
-        self.text('목표: 중앙 로프에서 F 탈출',16,18,(219,211,183),size='font')
+        goal = '목표: 중앙 로프에서 F 탈출'
+        self.rectangle(8,8,self.text_image(goal,ui.TEXT,'font').w+16,20,(*ui.SURFACE,225))
+        self.text(goal,16,18,ui.TEXT,size='font')
         lines = self.course_recommendation(game)
         if lines and self.interaction_hint(game) is None:
-            self.hud_panel((8,36,206,10+15*len(lines)))
-            for index,line in enumerate(lines):
-                self.text(('추천: ' if index == 0 else '')+line,16,46+index*15,(200,206,182))
+            values = [('추천: ' if index == 0 else '')+line for index,line in enumerate(lines)]
+            width = max(self.text_image(value,ui.MUTED,'small').w for value in values)+16
+            self.rectangle(8,36,width,10+15*len(lines),(*ui.SURFACE,225))
+            for index,value in enumerate(values):self.text(value,16,46+index*15,ui.MUTED)
 
     def hud(self, game, fps=0):
         remaining = max(0., PHASE_SECONDS-game.phase_time)
         warning = game.phase_warning or game.state == 'shifting'
         phase = f'곧 {PHASES[game.next_phase]}' if game.phase_warning else PHASES[game.phase]
         title = '미로 변형 중' if game.state == 'shifting' else f'{phase} · {math.ceil(remaining):02d}초'
-        if game.test_course:
-            title = f'검수 코스 · {title}'
+        if game.test_course:title = f'검수 코스 · {title}'
         self.hud_panel(PHASE_HUD_RECT)
-        self.text(title,320,18,(239,187,108) if warning else (231,221,198),size='hud_font',center=True)
-        self.rectangle(234,28,172,3,(40,39,33))
-        self.rectangle(234,28,172*remaining/PHASE_SECONDS,3,(215,160,81) if warning else (171,139,88))
-        puzzle_status = None
-        if game.puzzle_gate:
-            if game.puzzle_open:
-                puzzle_status = '퍼즐 통로 개방됨'
-            elif game.puzzle_reserved_phase is not None:
-                puzzle_status = f'다음 {PHASES[game.puzzle_reserved_phase]} 개방 예정'
-        if puzzle_status and game.state != 'puzzle' and not game.map_open:
-            self.hud_panel((238,42,164,20))
-            self.text(puzzle_status,320,52,(211,194,145),size='font',center=True)
+        self.text(title,320,18,ui.DANGER if warning else ui.TEXT,size='hud_font',center=True)
+        self.rectangle(234,28,172,2,ui.RULE)
+        self.rectangle(234,28,172*remaining/PHASE_SECONDS,2,ui.DANGER if warning else ui.BRASS)
         choice = game.shortcut_choice
-        if choice.selected is not None and game.state != 'puzzle' and not game.map_open:
-            option = game.route_options[choice.selected]
-            status = f'{option.label} · 개방됨' if choice.opened else f'{option.label} · 다음 {PHASES[choice.reserved_phase]} 개방'
-            y = 76 if puzzle_status else 52
-            self.hud_panel((208,y-10,224,20))
-            self.text(status,320,y,(175,218,188),size='font',center=True)
-
-        self.hud_vitals(game)
-        if game.state == 'explore' and not game.map_open:
+        statuses = []
+        if game.puzzle_gate:
+            if game.puzzle_reserved_phase is not None:
+                statuses.append(f'P 문 · 다음 {PHASES[game.puzzle_reserved_phase]} 개방 예정')
+            elif game.puzzle_open:statuses.append('P 문 개방')
+        if choice.selected is not None:
+            status = f'경로 {choice.selected+1} 개방' if choice.opened else f'경로 {choice.selected+1} · 다음 {PHASES[choice.reserved_phase]} 개방 예정'
+            statuses.append(status)
+        if game.state != 'puzzle' or game.puzzle_tab != 'maze':self.hud_vitals(game)
+        exploring = game.state == 'explore' and not game.map_open
+        if exploring:
+            message = (game.time < game.banner_until and not warning
+                       and not game.banner.startswith('횃불에 접근해 F')
+                       and not (statuses and ('퍼즐 완료' in game.banner or '확정 · 다음' in game.banner)))
+            if game.guard_attack_at is not None:
+                self.hud_panel((240,40,384,24),accent=ui.DANGER)
+                self.text('수호자 공격 예고',432,52,ui.DANGER,size='hud_font',center=True)
+            elif message:
+                self.hud_panel((80,40,480,26),accent=ui.BRASS)
+                self.text(game.banner,320,53,ui.TEXT,size='font',center=True)
+            elif statuses and not warning:
+                text = '   |   '.join(statuses)
+                width = self.text_image(text,ui.MUTED,'small').w+2*ui.GAP
+                left = LW-ui.SAFE-width
+                self.hud_panel((left,40,width,22))
+                self.text(text,left+ui.GAP,51,ui.MUTED)
             self.hud_panel((548,366,76,22))
-            self.text('M  지도',586,377,(222,210,181),size='font',center=True)
+            self.text('M  지도',586,377,ui.MUTED,size='font',center=True)
         hint = self.interaction_hint(game)
         if hint:
             cell,label = hint
             x,y = self.world(cell[0]+.5,cell[1]+.5)
             x,y = max(66,min(LW-66,x)),max(96,min(282,y-64))
             boulder = cell == game.boulder_entry
-            if boulder:
-                x,y = max(96,min(LW-96,x)),y-18
-            self.hud_panel((x-88,y-11,176,36) if boulder else (x-56,y-11,112,22))
-            self.text(label,x,y,(237,208,157),size='font',center=True)
-            if boulder:
-                self.text('돌 접촉 즉사 · 여섯 경사 구간 중앙 횡단',x,y+17,(224,213,188),center=True)
-        if (game.time < game.banner_until and not warning and game.state == 'explore'
-                and not game.map_open and not game.banner.startswith('횃불에 접근해 F')
-                and not (puzzle_status and game.banner.startswith('퍼즐 완료'))):
-            top = (92 if puzzle_status else 68) if choice.selected is not None else 68 if puzzle_status else 52
-            self.hud_panel((80,top,480,26))
-            self.text(game.banner,320,top+13,(225,208,164),size='font',center=True)
+            if boulder:x,y = max(96,min(LW-96,x)),y-18
+            self.hud_panel((x-88,y-11,176,36) if boulder else (x-56,y-11,112,22),accent=ui.BRASS)
+            self.text(label,x,y,ui.FOCUS,size='font',center=True)
+            if boulder:self.text('돌 접촉 즉사 · 여섯 경사 구간 중앙 횡단',x,y+17,ui.MUTED,center=True)
         self.hud_guidance(game)
 
     def puzzle_attack_warning(self, game, x, y, *, center=False):
         if game.guard_attack_at is not None:
             self.text('수호자 공격 예고',x,y,(239,164,109),size='font',center=center)
 
+    def choice_control(self, rect, index, *, selected=False, enabled=True, pending=False):
+        x,y,w,h = rect
+        self.rectangle(x,y,w,h,ui.BRASS if selected else ui.RULE)
+        hovered = self.choice_hover == index and enabled and not pending
+        self.rectangle(x+2,y+2,w-4,h-4,(29,33,31) if hovered else ui.SURFACE)
+        if selected:self.rectangle(x+2,y+2,3,h-4,ui.BRASS)
+        if self.choice_focus == index and not pending:
+            for edge in ((x+5,y+5,w-10,1),(x+5,y+h-6,w-10,1),
+                         (x+5,y+5,1,h-10),(x+w-6,y+5,1,h-10)):
+                self.rectangle(*edge,ui.FOCUS if enabled else ui.MUTED)
+
+    def panel_background(self):
+        # 공통 시간 표시를 남기고 패널 바깥의 장면 조각도 같은 표면으로 덮는다.
+        x,y,w,h = PHASE_HUD_RECT
+        self.rectangle(0,0,LW,y,ui.SURFACE)
+        self.rectangle(0,0,x,y+h+1,ui.SURFACE)
+        self.rectangle(x+w,0,LW-x-w,y+h+1,ui.SURFACE)
+        self.rectangle(0,y+h+1,LW,LH-y-h-1,ui.SURFACE)
+
     def shortcut_overlay(self, game):
-        self.rectangle(0,37,LW,305,(0,0,0,175))
-        self.text('숏컷 경로 선택',320,61,(232,217,180),size='title',center=True)
+        self.panel_background()
+        self.text('숏컷 경로 선택',320,61,ui.TEXT,size='title',center=True)
         from .maze_model import distances
         ordinary = distances(game.grid,game.choice_start)[game.choice_goal]
-        self.text(f'U 출발 → V 합류 · 이번 판 하나만 · 다음 {PHASES[game.next_phase]} 개방 · 현재 {ordinary}칸',320,88,size='font',center=True)
+        self.text(f'U 출발 → V 합류 · 이번 판 하나만 · 다음 {PHASES[game.next_phase]} 개방 · 현재 {ordinary}칸',320,88,ui.MUTED,size='font',center=True)
+        pending = game.choice_confirm_requested
         for index,(option,rect) in enumerate(zip(game.route_options,CHOICE_CARD_RECTS)):
             x,y,w,h = rect
             selected = game.shortcut_choice.preview == index
-            edge = (239,197,119) if selected else (103,109,97)
-            self.rectangle(x,y,w,h,edge)
-            self.rectangle(x+2,y+2,w-4,h-4,(24,29,29))
-            self.text(option.label+(' · 선택됨' if selected else ''),x+14,y+18,
-                      edge if selected else (211,215,195),size='hud_font')
+            self.choice_control(rect,index,selected=selected,pending=pending)
+            self.text(option.label+(' · 임시 선택' if selected else ''),x+14,y+18,
+                      ui.FOCUS if selected else ui.TEXT,size='hud_font')
             grid = game.layout_for_phase(game.next_phase)
             grid[option.gate[1]][option.gate[0]] = 0
             exposure = game.route_exposure(option.path,grid)
-            self.text(f'{option.distance}칸 · 기준 노출 {len(exposure)}곳',x+14,y+40,(223,217,193),size='font')
+            self.text(f'{option.distance}칸 · 기준 노출 {len(exposure)}곳',x+14,y+40,ui.MUTED,size='font')
             xs,ys = zip(*option.path)
             left,top = max(0,min(xs)-1),max(0,min(ys)-1)
             right,bottom = min(COLS,max(xs)+2),min(ROWS,max(ys)+2)
@@ -827,15 +847,18 @@ class View:
                 self.badge(label,*point(cell),(173,215,192))
         x,y,w,h = CHOICE_CONFIRM_RECT
         enabled = game.shortcut_choice.preview is not None
-        self.hud_panel((x,y,w,h))
-        self.text('이 경로 확정' if enabled else '먼저 후보를 클릭하세요',x+w/2,y+h/2,
-                  (245,211,143) if enabled else (136,144,132),size='hud_font',center=True)
-        self.text('카드 클릭은 임시 선택 · 확정 후 변경 불가 · Esc 닫기',320,334,center=True)
-        self.text('붉은 점: 현재 수호자 위치·예정 지형 기준 · 수호자가 이동하면 다른 길에서도 마주칠 수 있음',365,383,center=True)
+        self.choice_control(CHOICE_CONFIRM_RECT,2,enabled=enabled,pending=pending)
+        self.text('확정 처리 대기' if pending else '이 경로 확정' if enabled else '먼저 카드를 임시 선택',x+w/2,y+h/2,
+                  ui.FOCUS if enabled else ui.MUTED,size='hud_font',center=True)
+        self.text('← / → 카드 · Tab 이동 · Enter 실행 · 확정 후 변경 불가 · Esc 닫기',320,332,ui.MUTED,center=True)
+        self.hud_vitals(game)
+        self.text('붉은 점: 현재 수호자 위치·예정 지형 기준',190,357,ui.MUTED)
+        self.text('이동하는 수호자는 다른 길에서도 만날 수 있음',190,377,ui.MUTED)
         self.puzzle_attack_warning(game,480,61,center=True)
 
     def puzzle_overlay(self, game):
-        self.rectangle(0,37,LW,LH-37,(0,0,0,130))
+        self.rectangle(0,37,LW,307,(0,0,0,150))
+        self.rectangle(0,344,LW,LH-344,ui.SURFACE)
         previous = p.SDL_Rect()
         p.SDL_RenderGetViewport(p.renderer,ctypes.byref(previous))
         p.SDL_RenderSetViewport(p.renderer,p.SDL_Rect(PUZZLE_OFFSET_X,0,LW-PUZZLE_OFFSET_X,LH))
@@ -843,6 +866,7 @@ class View:
             self.puzzle_panel(game)
         finally:
             p.SDL_RenderSetViewport(p.renderer,previous)
+        self.hud_vitals(game)
 
     def puzzle_panel(self, game):
         parchment = (234, 219, 183)
@@ -859,7 +883,7 @@ class View:
             material = 'raw_wall' if solid else 'raw_floor'
             self.image(material, rect, (x % 9*130, y % 9*130, 130, 130), tint)
 
-        self.image('mouse-maze-panel', (16, 37, 488, 326))
+        self.image('mouse-maze-panel', (16, 37, 488, 308))
         self.text('마우스 미로',66,68,parchment,size='title')
         self.text('Esc 닫기',394,68,muted,size='font')
         self.puzzle_attack_warning(game,270,68)
@@ -926,7 +950,7 @@ class View:
             self.rectangle(cx-7,cy-8,14,1,color)
             self.rectangle(cx-7,cy+7,14,1,color)
             self.text(str(index+1),cx,cy,color,size='hud_font',center=True)
-        footer = 344 if WAYPOINTS else 331
+        footer = 336 if WAYPOINTS else 331
         if game.puzzle.hit_wall:
             self.text('연결이 막혔습니다 · 통로로 돌아와 이어 그리기',66,footer,ember,size='font')
         elif WAYPOINTS:
@@ -1107,11 +1131,11 @@ class View:
         self.rectangle(x-2, y-2, 5, 5, (255, 235, 182))
 
     def map_overlay(self, game):
-        self.rectangle(0,0,LW,LH,(8,12,14,250))
-        self.text(f'{PHASES[game.phase]} 방문 지도',320,44,(234,216,177),size='title',center=True)
-        self.text('지나간 통로만 표시 · M / Esc 닫기 · 세계 시간은 계속 진행',320,68,center=True)
-        step,ox,oy=11,(LW-COLS*11)//2,88
-        self.hud_panel((ox-10,oy-10,COLS*step+20,ROWS*step+20))
+        self.panel_background()
+        self.text(f'{PHASES[game.phase]} 방문 지도',320,58,ui.TEXT,size='title',center=True)
+        self.text('지나간 통로만 표시 · M / Esc 닫기 · 세계 시간은 계속 진행',320,82,ui.MUTED,center=True)
+        step,ox,oy=10,(LW-COLS*10)//2,102
+        self.hud_panel((ox-8,oy-6,COLS*step+16,ROWS*step+12))
         for x,y in game.visited:
             self.rectangle(ox+x*step,oy+y*step,step-1,step-1,(145,143,119))
         if game.trap_discovered:
@@ -1131,10 +1155,31 @@ class View:
                 self.badge('L',ox+(cell[0]+.5)*step,oy+(cell[1]+.5)*step,(151,210,174))
         x,y=game.player.x,game.player.y
         self.rectangle(ox+x*step-2,oy+y*step-2,5,5,(231,214,156))
-        self.text('노랑: 플레이어    A/B: 칼날 입구·도착점',320,365,center=True)
-        self.text('C/D: 돌 입구·도착점 · L: 길의 방',320,383,center=True)
+        self.hud_vitals(game)
+        self.text('노랑: 플레이어 · A/B: 칼날 입구·도착점',190,357,ui.MUTED)
+        self.text('C/D: 돌 입구·도착점 · L: 길의 방',190,377,ui.MUTED)
         if game.guard_attack_at is not None:
-            self.text('수호자 공격 예고',459,37,(255,204,112),size='font')
+            self.text('수호자 공격 예고',480,58,ui.DANGER,size='font',center=True)
+
+    def result_overlay(self, game):
+        cleared = game.state == 'clear'
+        accent = ui.FOCUS if cleared else ui.DANGER
+        reason = '중앙 로프에서 탈출했습니다' if cleared else '체력이 0이 됐습니다'
+        if not cleared and game.banner.startswith(('돌에 깔렸습니다','수호자의 공격으로','칼날에 맞아')):
+            reason = game.banner.split(' · R')[0]
+        self.rectangle(0,0,LW,LH,(*ui.SURFACE,246))
+        self.rectangle(200,136,240,2,accent)
+        self.text('탈출 성공' if cleared else '실패',320,184,accent,size='big',center=True)
+        self.text(reason,320,234,ui.TEXT,size='font',center=True)
+        self.hud_panel(RESULT_RESTART_RECT,accent)
+        x,y,w,h = RESULT_RESTART_RECT
+        for edge in ((x+4,y+4,w-8,1),(x+4,y+h-5,w-8,1),
+                     (x+4,y+4,1,h-8),(x+w-5,y+4,1,h-8)):
+            self.rectangle(*edge,ui.FOCUS)
+        self.text('R · 검수 코스 다시 시작' if game.test_course else 'R · 새 회차 시작',320,286,ui.FOCUS,size='hud_font',center=True)
+        self.text('같은 배치의 검수 코스로 돌아갑니다' if game.test_course else '다음 회차의 시간대와 배치로 시작합니다',
+                  320,325,ui.MUTED,center=True)
+        self.text('Enter / 클릭으로도 다시 시작 · Esc 종료',320,350,ui.MUTED,center=True)
 
     def draw(self, game, fps=0):
         p.canvas_width,p.canvas_height=LW,LH
@@ -1162,14 +1207,7 @@ class View:
             self.map_overlay(game)
         if game.state == 'puzzle':
             self.shortcut_overlay(game) if game.puzzle_tab == 'choice' else self.puzzle_overlay(game)
-        if game.state=='clear':
-            self.rectangle(0,0,LW,LH,(0,0,0,240))
-            self.text('CLEAR',225,180,(226,213,171),size='big')
-            self.text('중앙 탈출구에 도달했습니다 · R 새 회차',200,236,size='font')
-        elif game.state=='failed':
-            self.rectangle(0,0,LW,LH,(0,0,0,240))
-            self.text('실패',275,180,(218,126,109),size='big')
-            self.text('체력이 0이 됐습니다 · R 새 회차',230,236,size='font')
+        if game.state in ('clear','failed'):self.result_overlay(game)
         # 탐색↔변형에는 전체 암전을 넣지 않아 벽 연출과 고정 HUD가 보이게 한다.
         display_mode = 'explore' if game.state in ('shifting', 'puzzle') or path_entering else game.state
         kind = game.trap_kind if native_trap else None
@@ -1188,7 +1226,16 @@ class View:
             p.SDL_RenderCopy(p.renderer, self.logical, None, None)
         self.display_ready = native_trap
         p.SDL_SetRenderTarget(p.renderer, None)
-        p.SDL_RenderCopy(p.renderer, self.display if native_trap else self.logical, None, None)
+        self.clear((0,0,0,255))
+        viewport = fit_viewport(*self.output_size())
+        if viewport[2] and viewport[3]:
+            p.SDL_RenderCopy(p.renderer,self.display if native_trap else self.logical,None,p.SDL_Rect(*viewport))
+
+    @staticmethod
+    def output_size():
+        width,height = ctypes.c_int(),ctypes.c_int()
+        assert p.SDL_GetRendererOutputSize(p.renderer,ctypes.byref(width),ctypes.byref(height)) == 0
+        return width.value,height.value
 
     def select_readback_target(self):
         """Select the current frame as a 1280×800 texture for pixel readback."""
