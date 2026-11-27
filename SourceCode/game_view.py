@@ -18,6 +18,7 @@ from .world_path_room import FIXED_FLOOR, LOOSE_POSITIONS, ENTER_SECONDS
 LW, LH, SCALE = 640, 400, 2
 MAP_RECT = (0, 0, LW, LH)
 PHASE_HUD_RECT = (222, 8, 196, 28)
+GOAL_HUD_RECT = (8, 6, 206, 25)
 VITALS_HUD_RECT = (15, 348, 138, 44)
 PUZZLE_OFFSET_X = 60
 BOULDER_SIGN_SCALE = .125
@@ -687,6 +688,50 @@ class View:
             if fill:
                 self.rectangle(40,y-height/2,fill,height,color)
 
+    @staticmethod
+    def course_recommendation(game):
+        if (not game.test_course or game.state != 'explore' or game.map_open
+                or game.phase_warning or game.guard_attack_at is not None):
+            return ()
+        if game.time < game.banner_until and not game.banner.startswith('횃불에 접근해 F'):
+            return ()
+        choice = game.shortcut_choice
+        if choice.opened:
+            return (f'{choice.selected+1}번 문 통과','중앙 로프에서 F')
+        if choice.selected is not None:
+            return (f'{choice.selected+1}번 통로 예약',f'다음 {PHASES[choice.reserved_phase]}에 열림')
+        if game.path_completed:
+            return ('길의 방 통과','U에서 두 경로 비교')
+        if choice.preview is not None:
+            return ('U에서 두 경로 비교',)
+        if game.connection.completed:
+            return ('L 석판 연결됨','다시 들어가 맞은편까지 걷기')
+        if game.puzzle_open:
+            return ('P 통과 · L 석판 방에서','연결 후 직접 걷기')
+        if game.puzzle_reserved_phase is not None:
+            return ('P 예약됨',f'다음 {PHASES[game.puzzle_reserved_phase]}에 열림')
+        if game.puzzle.progress:
+            return ('P 마우스 문 풀이 계속',)
+        if game.boulder_completed:
+            return ('D 도착 · 다음 P 마우스 문',)
+        if game.trap_completed:
+            return ('B 도착 · 다음 C 돌방',)
+        if game.player.torch:
+            return ('A 칼날방',)
+        return ('횃불에 다가가 F',)
+
+    def hud_guidance(self, game):
+        if (game.state != 'explore' or game.map_open or game.phase_warning
+                or game.guard_attack_at is not None):
+            return
+        self.hud_panel(GOAL_HUD_RECT)
+        self.text('목표: 중앙 로프에서 F 탈출',16,18,(219,211,183),size='font')
+        lines = self.course_recommendation(game)
+        if lines and self.interaction_hint(game) is None:
+            self.hud_panel((8,36,206,10+15*len(lines)))
+            for index,line in enumerate(lines):
+                self.text(('추천: ' if index == 0 else '')+line,16,46+index*15,(200,206,182))
+
     def hud(self, game, fps=0):
         remaining = max(0., PHASE_SECONDS-game.phase_time)
         warning = game.phase_warning or game.state == 'shifting'
@@ -737,6 +782,7 @@ class View:
             top = (92 if puzzle_status else 68) if choice.selected is not None else 68 if puzzle_status else 52
             self.hud_panel((80,top,480,26))
             self.text(game.banner,320,top+13,(225,208,164),size='font',center=True)
+        self.hud_guidance(game)
 
     def shortcut_overlay(self, game):
         self.rectangle(0,37,LW,305,(0,0,0,175))

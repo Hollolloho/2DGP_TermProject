@@ -92,6 +92,8 @@ def run(app):
         print('PASS: frameless 84px HP/ST tracks at 6/4px, full/partial/zero values and fixed bounds; unoccupied scenery stays visible.')
         print('PASS: full-width 32/16 projection, phase HUD, contextual F, no sidebar/debug list and live M map.')
         print('PASS: used-fountain/puzzle overlap matches F input priority and preserves the P badge.')
+        from .check_mvp_guidance import run as check_mvp_guidance
+        check_mvp_guidance(app)
     finally:
         app.game = original
         app.release_input()
