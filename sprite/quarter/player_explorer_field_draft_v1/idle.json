@@ -1,0 +1,43 @@
+{
+  "schema": "explorer.pose.pico2d.v1",
+  "image": "idle.png",
+  "sheet_size": [
+    64,
+    64
+  ],
+  "frame_size": [
+    64,
+    64
+  ],
+  "pivot": [
+    32,
+    54
+  ],
+  "sampling": "nearest",
+  "source": {
+    "image": "idle-nw-source.png",
+    "method": "ImageGen with explorer turnaround and approved NW pose references",
+    "status": "appearance draft",
+    "prompt": "Create one new transparent full-body game sprite for a labyrinth explorer, W-direction standing idle. Input 1, the multi-pose turnaround on black, is the exact design and painterly art reference. Use its upper row front, side, and back to reconstruct that same brown-haired explorer: short dusty teal hooded shoulder mantle ending high on the back, visibly crossed worn leather straps, small brown leather map satchel against the back/hip as in the turnaround, single small rope coil at the belt, rolled-up flax linen sleeves and brown leather wrist wraps, dark brown cloth trousers and tall worn brown leather boots. Make the short teal mantle and brown field gear strong and legible when the sprite is reduced to a 64px square. Preserve the character's proportions, narrow shoulders, youthful brown-haired head and restrained hand-painted game illustration finish from Input 1. Input 2, the single full-body image, is ONLY the camera, crop and idle pose guide. Use its fixed north-west rear-left three-quarter orthographic view and relaxed upright posture with both feet planted on the same flat ground, facing away toward screen upper left. Expose the crown, small portion of the left cheek, rear shoulder planes and near boot; retain matching projected foot spacing and place head and boots at approximately the same heights in the image. The 2:1 game ground axis projects left 2/up 1. Warm neutral soft lighting, readable large painted shapes, good cloth/skin/leather separation. One full figure, centered, all visible with transparent margins including under both boots. Both hands relaxed and empty. No metal plate armor, shoulder plates, long cloak, pulled weapon, held torch, text, frame, backdrop, ground, cast shadow, UI, props outside the body, or extra character views. Real RGBA alpha background. Output a square production reference image with clean alpha edges."
+  },
+  "clips": {
+    "idle-nw": {
+      "direction": "nw",
+      "frames": [
+        {
+          "rect": [
+            0,
+            0,
+            64,
+            64
+          ]
+        }
+      ],
+      "durations_ms": [
+        1000
+      ],
+      "loop": true,
+      "still_frame": 0
+    }
+  }
+}

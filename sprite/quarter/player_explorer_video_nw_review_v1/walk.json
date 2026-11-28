@@ -1,0 +1,267 @@
+{
+  "schema": "explorer.pose.pico2d.v1",
+  "image": "walk.png",
+  "sheet_size": [
+    256,
+    256
+  ],
+  "frame_size": [
+    64,
+    64
+  ],
+  "pivot": [
+    32,
+    54
+  ],
+  "pivot_coordinates": "top-left; shared ground origin",
+  "sampling": "nearest",
+  "source": {
+    "file": "gemini_generated_video_4dddc804.mp4",
+    "sha256": "ac71366798dd616c70b50fa6c22094520b8f394be624c035f838dc426d56d31c",
+    "fps": 24.0,
+    "frame_range_inclusive": [
+      170,
+      201
+    ],
+    "frame_base": 0,
+    "ground_origin_video_px": [
+      670,
+      701
+    ],
+    "cell_crop_video_px": [
+      240,
+      -25,
+      860,
+      860
+    ],
+    "video_period_s": 1.3333333333333333,
+    "contact_measurement": "Short sole-silhouette samples; project displacement on the game 2:1 axis and match average stance motion to game speed.",
+    "contacts": [
+      {
+        "video_frames": [
+          170,
+          171,
+          172
+        ],
+        "sole_points_video_px": [
+          [
+            700.0,
+            680
+          ],
+          [
+            711.0,
+            685
+          ],
+          [
+            722.0,
+            689
+          ]
+        ]
+      },
+      {
+        "video_frames": [
+          192,
+          193,
+          194,
+          195,
+          196
+        ],
+        "sole_points_video_px": [
+          [
+            592.0,
+            631
+          ],
+          [
+            601.5,
+            635
+          ],
+          [
+            612.0,
+            640
+          ],
+          [
+            624.5,
+            646
+          ],
+          [
+            635.5,
+            651
+          ]
+        ]
+      }
+    ]
+  },
+  "clips": {
+    "walk-nw": {
+      "direction": "nw",
+      "loop": true,
+      "phase_offset_frames": 0,
+      "frames": [
+        {
+          "rect": [
+            0,
+            0,
+            64,
+            64
+          ],
+          "source_frame": 170
+        },
+        {
+          "rect": [
+            64,
+            0,
+            64,
+            64
+          ],
+          "source_frame": 172
+        },
+        {
+          "rect": [
+            128,
+            0,
+            64,
+            64
+          ],
+          "source_frame": 174
+        },
+        {
+          "rect": [
+            192,
+            0,
+            64,
+            64
+          ],
+          "source_frame": 176
+        },
+        {
+          "rect": [
+            0,
+            64,
+            64,
+            64
+          ],
+          "source_frame": 178
+        },
+        {
+          "rect": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "source_frame": 180
+        },
+        {
+          "rect": [
+            128,
+            64,
+            64,
+            64
+          ],
+          "source_frame": 182
+        },
+        {
+          "rect": [
+            192,
+            64,
+            64,
+            64
+          ],
+          "source_frame": 184
+        },
+        {
+          "rect": [
+            0,
+            128,
+            64,
+            64
+          ],
+          "source_frame": 186
+        },
+        {
+          "rect": [
+            64,
+            128,
+            64,
+            64
+          ],
+          "source_frame": 188
+        },
+        {
+          "rect": [
+            128,
+            128,
+            64,
+            64
+          ],
+          "source_frame": 190
+        },
+        {
+          "rect": [
+            192,
+            128,
+            64,
+            64
+          ],
+          "source_frame": 192
+        },
+        {
+          "rect": [
+            0,
+            192,
+            64,
+            64
+          ],
+          "source_frame": 194
+        },
+        {
+          "rect": [
+            64,
+            192,
+            64,
+            64
+          ],
+          "source_frame": 196
+        },
+        {
+          "rect": [
+            128,
+            192,
+            64,
+            64
+          ],
+          "source_frame": 198
+        },
+        {
+          "rect": [
+            192,
+            192,
+            64,
+            64
+          ],
+          "source_frame": 200
+        }
+      ],
+      "durations_ms": [
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83
+      ],
+      "total_duration_ms": 1333,
+      "cycle_distance_px": 28.754794
+    }
+  }
+}

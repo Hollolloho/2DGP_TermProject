@@ -1,0 +1,64 @@
+{
+  "schema": "explorer.pose.pico2d.v1",
+  "image": "idle.png",
+  "sheet_size": [
+    64,
+    64
+  ],
+  "frame_size": [
+    64,
+    64
+  ],
+  "pivot": [
+    32,
+    54
+  ],
+  "pivot_coordinates": "top-left; shared ground origin",
+  "sampling": "nearest",
+  "source": {
+    "file": "gemini_generated_video_4dddc804.mp4",
+    "sha256": "ac71366798dd616c70b50fa6c22094520b8f394be624c035f838dc426d56d31c",
+    "fps": 24.0,
+    "frame": 0,
+    "frame_base": 0,
+    "ground_origin_video_px": [
+      670,
+      701
+    ],
+    "cell_crop_video_px": [
+      240,
+      -25,
+      860,
+      860
+    ],
+    "reference_image": "reference-nw.png",
+    "reference_size": [
+      512,
+      512
+    ],
+    "reference_pivot": [
+      256,
+      432
+    ]
+  },
+  "clips": {
+    "idle-nw": {
+      "direction": "nw",
+      "frames": [
+        {
+          "rect": [
+            0,
+            0,
+            64,
+            64
+          ]
+        }
+      ],
+      "durations_ms": [
+        1000
+      ],
+      "loop": true,
+      "still_frame": 0
+    }
+  }
+}
