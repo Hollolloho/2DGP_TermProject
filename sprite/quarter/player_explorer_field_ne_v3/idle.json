@@ -1,0 +1,51 @@
+{
+  "schema": "explorer.walk.pico2d.v1",
+  "frame_size": [
+    64,
+    64
+  ],
+  "pivot": [
+    32,
+    54
+  ],
+  "sampling": "nearest",
+  "image": "idle.png",
+  "sheet_size": [
+    64,
+    64
+  ],
+  "source": {
+    "previous_pose": "../player_explorer_field_ne_v2/idle.png",
+    "appearance_references": [
+      "../player_explorer_field_draft_v1/idle.png",
+      "../player_explorer_field_se_v4/idle.png"
+    ],
+    "imagegen_prompt": "Draw one game production Idle sprite of the EXACT approved labyrinth explorer in reference one, seen from the NORTH-EAST heading from rear and character-right in raised 2:1 orthographic quarter-view. Reference 2 is the old NE Idle: match that same character stance and camera, boot soles and head center, both boots on ground with natural stagger, lean silhouette. Render the approved character design from reference 1 as closely and cleanly as possible: compact chestnut tousled hair, short dark but distinctly PETROL TEAL hooded shoulder mantle as in reference 1, subdued cream rolled sleeve, one modest brown leather belt pouch and one rope on same flank as reference 2, narrow charcoal-brown trousers, small compact brown ankle boots, wrists naturally relaxed, both hands empty, shoulder-to-pelvis proportion consistent with ref 1. Do not broaden hair, exaggerate gloves, introduce a larger backpack or cape, change attachment, or turn toward viewer. Camera sees mostly his back, with small right cheek profile, whole figure faces toward screen upper right (+2,-1). Same overall size, body scale, quiet neutral lighting and warmth as both W/S concepts in ref 1, with soft understated clusters of paint and dark contrast. Draw ONE full figure on genuine fully transparent RGBA, enough margins all sides, no shadow, floor, FX, text, props, or guide.\n",
+    "scale": 0.030196629213483147,
+    "offset_px": [
+      16.39780540606467,
+      1.4136235955056193
+    ],
+    "srgb_gain": 0.9742857142857143
+  },
+  "clips": {
+    "idle-ne": {
+      "direction": "ne",
+      "loop": true,
+      "still_frame": 0,
+      "frames": [
+        {
+          "rect": [
+            0,
+            0,
+            64,
+            64
+          ]
+        }
+      ],
+      "durations_ms": [
+        1000
+      ]
+    }
+  }
+}

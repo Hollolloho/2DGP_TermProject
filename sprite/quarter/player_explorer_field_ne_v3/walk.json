@@ -1,0 +1,204 @@
+{
+  "schema": "explorer.walk.pico2d.v1",
+  "frame_size": [
+    64,
+    64
+  ],
+  "pivot": [
+    32,
+    54
+  ],
+  "sampling": "nearest",
+  "image": "walk.png",
+  "sheet_size": [
+    256,
+    256
+  ],
+  "source": {
+    "previous_motion": "../player_explorer_field_ne_v2/walk.png",
+    "appearance_references": [
+      "../player_explorer_field_nw_v2/walk.png",
+      "../player_explorer_field_se_v4/walk.png"
+    ],
+    "art": "Unified NE whole-figure ImageGen redraw. Original NE cycle timing, pivot and frame order.",
+    "imagegen_prompt": "Produce a style-unified production 4×4 alpha atlas of the approved labyrinth explorer walking NORTH-EAST (D key, heading and boots point upper-right, screen projection +2,-1, raised orthographic quarter view from his rear and character-right side). REF 1 is the immutable registered 16-cell D MOTION, exactly in row-major 00–15. For each cell trace that exact whole pose, camera and their registered screen-space positions. Same head/pelvis/hand/sole coordinates, same leg and hand occlusion as the matching numbered pose; do not improvise a new cycle, do not change phase, stride, leg length, or hand swing. Reference 2 front/back paintings are the exact appearance of the SAME approved W/S explorer. Each cel is a whole redrawing at one locked scale using the same identity: tousled SHORT chestnut brown hair (compact, not large), lean build, short dark petrol-teal hooded shoulder mantle (petrol teal is clearly readable even in dark values), cream flax shirt with subdued highlights and casually rolled sleeves, dark brown narrow canvas trousers, loose empty hands with brown wrist wraps, small compact brown ankle boots, single brown leather belt satchel with one muted rope on the same flank as the D guide. Maintain exactly the back and right quarter heading of ref 1, never front/side head angle, no bag or rope hop, no accessories added. In particular cel 14 reaches forward a LITTLE from under the pelvis, 15 advances its foretoe another small interval, and 00 extends another small interval with the rear sole at EXACTLY the same height as in 15. Keep both soles on the correct visible contact planes as in the reference. Make 14, 15, and 00 match the other thirteen figures in nose, hair, shoulder width, legs, hand size, texture, fabric color and muted contrast. Do not make these three suddenly broader, brighter, or more detailed. Same face, color groups, body scale and exact outfit in every cell, like one painter generated a single take. True transparent RGBA, no background, outlines added, ground, drop shadow, alpha artefacts, motion smear, HUD, props, labels or lines. Exactly four rows four columns with generous gutters, the pose in every complete isolated cell is in the identical cell coordinate system as ref 1, no cut boots or hands. Return one 16-figure atlas.\n",
+    "common_scale": 0.1965065502183406,
+    "common_offset_px": [
+      1.1160793142913406,
+      0.49781659388646915
+    ],
+    "atlas_srgb_gain": 0.9324675324675327,
+    "loop_redrawn_frames": [
+      14,
+      15
+    ],
+    "loop_imagegen_prompt": "Edit this exact north-east explorer 2×2 atlas. In reading order top left is 13, top right 14, bottom left 15, bottom right 00. First reference is the exact newly unified character look, tightly preserve its petrol teal soft short hood and cloak, brown short hair shape, muted cream sleeves, slim brown trousers, compact boots, one waist bag and rope, the low-key warm values and brushwork. Same angle and size, very steady head/pelvis in the same slot. Reference two is the CORRECT exact near-boot and rear-sole pose for each cell, in that same order. Redraw all four figures separately, respecting this fixed consistent NE +2,-1 raised orthographic view from rear/right. Keep 13 and 00 of reference one registered as style anchors. In cel 14 extend the visible forward boot a tiny bit farther to match second reference, reaching x38 or x39 in the 64-cell space instead of x36; knee and ankle flow together naturally. In cel 15 pull the forward boot back a little to x41–42 (NOT fully extended nearly like 00), it is in-flight just before settling. The advancing foot pathway goes smoothly along x38–39 in 14, x41–42 in 15, and x44 in 00. The rear boot y is 50 in all three; keep the boot at the original height, slight ankle flex and natural loose knee as in the CORRECT second reference. No cues drawn, no annotations. IMPORTANT the head, chest, shoulders and hands remain IDENTICAL style, size, value and overall cell position to reference one, with no shift or added details. Don't change the leg lengths or bag location, don't brighten the hands, don't inflate the boots. Whole bodies, not cutouts. Each of four complete figures fully inside each exact square cell with wide transparent space, transparent alpha no markings, floor, backdrop, effects, or shadows.\n"
+  },
+  "clips": {
+    "walk-ne": {
+      "direction": "ne",
+      "loop": true,
+      "frames": [
+        {
+          "rect": [
+            0,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            0,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            0,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            0,
+            192,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            192,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            192,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            192,
+            64,
+            64
+          ]
+        }
+      ],
+      "phase_offset_frames": 0,
+      "cycle_distance_px": 28.754794,
+      "total_duration_ms": 321,
+      "durations_ms": [
+        20,
+        20,
+        20,
+        20,
+        20,
+        21,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20
+      ],
+      "step_events": [
+        {
+          "frame": 0,
+          "event": "step_contact_1"
+        },
+        {
+          "frame": 8,
+          "event": "step_contact_2"
+        }
+      ]
+    }
+  }
+}

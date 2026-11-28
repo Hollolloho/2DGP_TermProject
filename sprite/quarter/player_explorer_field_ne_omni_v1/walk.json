@@ -1,0 +1,228 @@
+{
+  "schema": "explorer.walk.pico2d.v1",
+  "frame_size": [
+    64,
+    64
+  ],
+  "pivot": [
+    32,
+    54
+  ],
+  "sampling": "nearest",
+  "image": "walk.png",
+  "sheet_size": [
+    256,
+    256
+  ],
+  "source": {
+    "video": "gemini_generated_video_99d1be2e.mp4",
+    "source_fps": 24,
+    "source_start_frame": 143,
+    "source_boundary_frame_exclusive": 178,
+    "source_frames": [
+      143,
+      145,
+      147,
+      150,
+      152,
+      154,
+      156,
+      158,
+      160,
+      163,
+      165,
+      167,
+      169,
+      171,
+      174,
+      176
+    ],
+    "previous_walk": "../player_explorer_field_ne_v3/walk.png",
+    "common_scale": 0.08490566037735849,
+    "common_offset_px": [
+      13.320754716981135,
+      4.344339622641513
+    ],
+    "srgb_gain": 0.9645436321039539,
+    "art": "Original video poses at fixed registration, with neutral guide lines removed by foreground matting.",
+    "loop_audit": {
+      "lead_toe_x_px": [
+        34,
+        38,
+        40
+      ],
+      "rear_sole_y_px": [
+        50,
+        50,
+        51
+      ]
+    }
+  },
+  "clips": {
+    "walk-ne": {
+      "direction": "ne",
+      "loop": true,
+      "frames": [
+        {
+          "rect": [
+            0,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            0,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            0,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            0,
+            192,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            192,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            192,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            192,
+            64,
+            64
+          ]
+        }
+      ],
+      "phase_offset_frames": 0,
+      "cycle_distance_px": 28.754794,
+      "total_duration_ms": 321,
+      "durations_ms": [
+        20,
+        20,
+        20,
+        20,
+        20,
+        21,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20
+      ],
+      "step_events": [
+        {
+          "frame": 0,
+          "event": "step_contact_1"
+        },
+        {
+          "frame": 8,
+          "event": "step_contact_2"
+        }
+      ]
+    }
+  }
+}
