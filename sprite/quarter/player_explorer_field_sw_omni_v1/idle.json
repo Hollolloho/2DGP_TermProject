@@ -1,0 +1,46 @@
+{
+  "schema": "explorer.walk.pico2d.v1",
+  "frame_size": [
+    64,
+    64
+  ],
+  "pivot": [
+    32,
+    54
+  ],
+  "sampling": "nearest",
+  "image": "idle.png",
+  "sheet_size": [
+    64,
+    64
+  ],
+  "source": {
+    "illustration": "omni-a-sw-walk-reference.png",
+    "common_scale": 0.06771653543307087,
+    "common_offset_px": [
+      -3.1716941221163175,
+      -2.137007874015744
+    ],
+    "srgb_gain": 0.7536893536584017
+  },
+  "clips": {
+    "idle-sw": {
+      "direction": "sw",
+      "frames": [
+        {
+          "rect": [
+            0,
+            0,
+            64,
+            64
+          ]
+        }
+      ],
+      "durations_ms": [
+        1000
+      ],
+      "loop": true,
+      "still_frame": 0
+    }
+  }
+}

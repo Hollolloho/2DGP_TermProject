@@ -1,0 +1,237 @@
+{
+  "schema": "explorer.walk.pico2d.v1",
+  "frame_size": [
+    64,
+    64
+  ],
+  "pivot": [
+    32,
+    54
+  ],
+  "sampling": "nearest",
+  "image": "walk.png",
+  "sheet_size": [
+    256,
+    256
+  ],
+  "source": {
+    "video": "gemini_generated_video_a4846390.mp4",
+    "source_fps": 24,
+    "source_start_frame": 136,
+    "source_boundary_frame_exclusive": 169,
+    "source_frames": [
+      136,
+      138,
+      140,
+      142,
+      144,
+      146,
+      148,
+      150,
+      152,
+      155,
+      157,
+      159,
+      161,
+      163,
+      165,
+      166
+    ],
+    "pose_alignment": "Common scale and origin for all frames. Neutral background and grounding shadow removed.",
+    "common_scale": 0.08704061895551257,
+    "common_offset_px": [
+      14.243713733075435,
+      7.085106382978722
+    ],
+    "srgb_gain": 0.8048328344374714,
+    "timing_reference": "../player_explorer_field_ne_omni_v1/walk.json",
+    "loop_audit": {
+      "phases": [
+        14,
+        15,
+        0
+      ],
+      "front_toe_x_and_rear_sole_y_px": [
+        [
+          26,
+          51
+        ],
+        [
+          24,
+          51
+        ],
+        [
+          23,
+          51
+        ]
+      ]
+    }
+  },
+  "clips": {
+    "walk-sw": {
+      "direction": "sw",
+      "loop": true,
+      "frames": [
+        {
+          "rect": [
+            0,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            0,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            0,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            0,
+            192,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            192,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            192,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            192,
+            64,
+            64
+          ]
+        }
+      ],
+      "phase_offset_frames": 0,
+      "cycle_distance_px": 28.754794,
+      "total_duration_ms": 321,
+      "durations_ms": [
+        20,
+        20,
+        20,
+        20,
+        20,
+        21,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20
+      ],
+      "step_events": [
+        {
+          "frame": 0,
+          "event": "step_contact_1"
+        },
+        {
+          "frame": 8,
+          "event": "step_contact_2"
+        }
+      ]
+    }
+  }
+}

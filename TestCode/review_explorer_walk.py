@@ -28,16 +28,19 @@ SE_PACK = Path('sprite/quarter/player_explorer_field_se_v4')
 SE_PREVIOUS_PACK = Path('sprite/quarter/player_explorer_field_se_v3')
 NE_PACK = Path('sprite/quarter/player_explorer_field_ne_omni_v1')
 NE_PREVIOUS_PACK = Path('sprite/quarter/player_explorer_field_ne_v3')
-FIELD_NE = '--field-ne' in sys.argv
+SW_PACK = Path('sprite/quarter/player_explorer_field_sw_omni_v1')
+FIELD_SW = '--field-sw' in sys.argv
+FIELD_NE = FIELD_SW or '--field-ne' in sys.argv
 FIELD_SE = FIELD_NE or '--field-se' in sys.argv
 FIELD_NW = FIELD_SE or '--field-nw' in sys.argv
 VIDEO_NW = FIELD_NW or '--video-nw' in sys.argv
 DEFAULT_VARIANT = (
-    'field-ne' if FIELD_NE else 'field-se' if FIELD_SE else
+    'field-sw' if FIELD_SW else 'field-ne' if FIELD_NE else 'field-se' if FIELD_SE else
     'field' if FIELD_NW else 'video' if VIDEO_NW else 'after'
 )
 COMPARISON_VARIANT = (
-    'field-ne-previous' if FIELD_NE else 'field-se-previous' if FIELD_SE else
+    'field-sw-previous' if FIELD_SW else 'field-ne-previous' if FIELD_NE else
+    'field-se-previous' if FIELD_SE else
     'video' if FIELD_NW else 'after' if VIDEO_NW else 'before'
 )
 KEYS = {p.SDLK_w: (-1, 0), p.SDLK_a: (0, 1),
@@ -97,7 +100,7 @@ class ReviewView(View):
                 }
                 self.nw_idles[variant] = self.nw_idles['field']
         if FIELD_NE:
-            before_ne, after_ne = COMPARISON_VARIANT, DEFAULT_VARIANT
+            before_ne, after_ne = 'field-ne-previous', 'field-ne'
             self.variants[before_ne] = {
                 **self.variants['field-se'],
                 'walk-ne': self.field_clip(NE_PREVIOUS_PACK, 'walk', 'ne', 'review-field-ne-previous'),
@@ -113,6 +116,20 @@ class ReviewView(View):
             for variant in (before_ne, after_ne):
                 self.nw_idles[variant] = self.nw_idles['field']
                 self.se_idles[variant] = self.se_idles['field-se']
+        if FIELD_SW:
+            self.variants[COMPARISON_VARIANT] = dict(self.variants['field-ne'])
+            self.variants[DEFAULT_VARIANT] = {
+                **self.variants['field-ne'],
+                'walk-sw': self.field_clip(SW_PACK, 'walk', 'sw', 'review-field-sw'),
+            }
+            self.sw_idles = {
+                COMPARISON_VARIANT: idle_clips['idle-sw'],
+                DEFAULT_VARIANT: self.field_clip(SW_PACK, 'idle', 'sw', 'review-field-sw-idle'),
+            }
+            for variant in (COMPARISON_VARIANT, DEFAULT_VARIANT):
+                self.nw_idles[variant] = self.nw_idles['field-ne']
+                self.se_idles[variant] = self.se_idles['field-ne']
+                self.ne_idles[variant] = self.ne_idles['field-ne']
         self.variant = 'after'
         self.authored_pace = True
         self.playback_rate = 1.
@@ -135,6 +152,8 @@ class ReviewView(View):
             self.player_catalog['clips']['idle-se'] = self.se_idles[name]
         if FIELD_NE:
             self.player_catalog['clips']['idle-ne'] = self.ne_idles[name]
+        if FIELD_SW:
+            self.player_catalog['clips']['idle-sw'] = self.sw_idles[name]
 
     def set_pace(self, authored):
         self.authored_pace = authored
@@ -152,6 +171,8 @@ class ReviewView(View):
                 self.variants[name]['walk-se']['cycle_distance_px'] = distance
                 if FIELD_NE:
                     self.variants[name]['walk-ne']['cycle_distance_px'] = distance
+                if FIELD_SW:
+                    self.variants[name]['walk-sw']['cycle_distance_px'] = distance
 
     def walk_period(self, facing):
         return self.player_catalog['clips']['walk-'+facing]['cycle_distance_px']/WALK_SPEED
@@ -173,7 +194,10 @@ class ReviewView(View):
         clip, index = self.player_pose(game)
         face = game.locomotion_clip_name('walk')[5:].upper()
         state = 'Walk' if game.player.state == 'walk' else 'Idle'
-        if FIELD_NE:
+        if FIELD_SW:
+            label = {'SW': '탐험가 A 영상' if self.variant == DEFAULT_VARIANT else '기존 A',
+                     'NW': '탐험가 W v2', 'SE': '탐험가 S v4', 'NE': '탐험가 D 영상'}[face]
+        elif FIELD_NE:
             label = {'NE': '탐험가 D 영상' if self.variant == 'field-ne' else '탐험가 D v3',
                      'NW': '탐험가 W v2', 'SE': '탐험가 S v4'}.get(face, '기존')
         elif FIELD_SE:
@@ -189,7 +213,8 @@ class ReviewView(View):
                   f' · {self.walk_period(face.lower()):.3f}초', 24, 21, tone, size='hud_font')
         self.text(f'게임 {WALK_SPEED:.1f}px/s · 재생 {self.playback_rate:g}배'
                   f' · 표시 {self.actual_fps:.0f}FPS', 24, 44, tone)
-        comparison_key = 'Tab D 전후 비교' if FIELD_NE else 'Tab S 전후 비교' if FIELD_SE else 'Tab 전후 비교'
+        comparison_key = ('Tab A 전후 비교' if FIELD_SW else 'Tab D 전후 비교' if FIELD_NE else
+                          'Tab S 전후 비교' if FIELD_SE else 'Tab 전후 비교')
         self.text('W 북서  A 남서  S 남동  D 북동  |  '+comparison_key, 24, 65, tone)
         pace_keys = ('1 영상 동기 / 2 접지 동기' if FIELD_SE
                      else '1 영상 주기  2 접지 기준' if VIDEO_NW else '1 0.8초  2 0.4초')
@@ -223,7 +248,7 @@ class FlatReview:
         self.held.clear()
         player = self.game.player
         player.x, player.y = COLS/2, ROWS/2
-        player.direction = 3 if FIELD_NE else 2 if FIELD_SE else 1 if VIDEO_NW else 3
+        player.direction = 0 if FIELD_SW else 3 if FIELD_NE else 2 if FIELD_SE else 1 if VIDEO_NW else 3
         player.screen_facing = DIAGONAL_FACINGS[player.direction]
         player.gait_phase = 0.
         player.rest()
@@ -303,12 +328,12 @@ def check(mode):
         for authored in (True, False):
             mode.view.set_pace(authored)
             if FIELD_SE:
-                assert mode.view.walk_period('se') == mode.view.walk_period('nw')
-                if FIELD_NE:
-                    assert mode.view.walk_period('ne') == mode.view.walk_period('nw')
                 period = mode.view.walk_period('nw')
                 sync_keys = (p.SDLK_w, p.SDLK_s, p.SDLK_d) if FIELD_NE else (p.SDLK_w, p.SDLK_s)
+                if FIELD_SW:
+                    sync_keys += (p.SDLK_a,)
                 for key in sync_keys:
+                    assert mode.view.walk_period(FACES[key]) == period
                     mode.reset()
                     mode.held = [key]
                     for frame in range(1, 49):
@@ -351,7 +376,9 @@ def check(mode):
                     elif face == 'se' and FIELD_SE:
                         expected_idle = 'review-field-se-idle' if FIELD_NE else f'review-{variant}-idle'
                     elif face == 'ne' and FIELD_NE:
-                        expected_idle = f'review-{variant}-idle'
+                        expected_idle = 'review-field-ne-idle' if FIELD_SW else f'review-{variant}-idle'
+                    elif face == 'sw' and FIELD_SW and variant == DEFAULT_VARIANT:
+                        expected_idle = 'review-field-sw-idle'
                     assert clip['review_texture'] == expected_idle
                     mode.held = [key]
                     mode.update(.001)
@@ -384,14 +411,14 @@ def check(mode):
         assert versions[0]['durations_ms'] == versions[1]['durations_ms']
     if FIELD_SE:
         a, b = (mode.view.variants[name] for name in (COMPARISON_VARIANT, DEFAULT_VARIANT))
-        action = 'walk-ne' if FIELD_NE else 'walk-se'
+        action = 'walk-sw' if FIELD_SW else 'walk-ne' if FIELD_NE else 'walk-se'
         assert all(a[name] is b[name] for name in a if name != action)
         assert b[action]['review_texture'] == f'review-{DEFAULT_VARIANT}'
         assert len(b[action]['frames']) == 16
         for key in ('cycle_distance_px', 'step_events', 'phase_offset_frames'):
             assert a[action][key] == b[action][key]
         assert b[action]['cycle_distance_px'] == b['walk-nw']['cycle_distance_px']
-        group = 'W/S/D' if FIELD_NE else 'W/S'
+        group = 'W/A/S/D' if FIELD_SW else 'W/S/D' if FIELD_NE else 'W/S'
         print(f'PASS: {group} select the same frame at equal travel for 3 loops in both pace modes.')
     mode.view.set_variant(DEFAULT_VARIANT)
     mode.reset()
@@ -399,14 +426,14 @@ def check(mode):
     mode.game.ui_time += 1.
     mode.view.draw(mode.game)
     if VIDEO_NW:
-        review_key = p.SDLK_d if FIELD_NE else p.SDLK_s if FIELD_SE else p.SDLK_w
+        review_key = p.SDLK_a if FIELD_SW else p.SDLK_d if FIELD_NE else p.SDLK_s if FIELD_SE else p.SDLK_w
         mode.held = [review_key]
         mode.update(.001)
         mode.view.draw(mode.game)
         mode.held.clear()
         mode.update(.001)
         mode.view.draw(mode.game)
-        selected = {p.SDLK_d: 'D', p.SDLK_s: 'S', p.SDLK_w: 'W'}[review_key]
+        selected = {p.SDLK_a: 'A', p.SDLK_d: 'D', p.SDLK_s: 'S', p.SDLK_w: 'W'}[review_key]
         print(f'PASS: {selected} Idle and Walk render, including stop and restart.')
     print(f'PASS: {cadence} cadence cases x3 loops, {restarts} restarts, '
           f'{turns} turns; matching Idle4, current Walk16x4; speed {WALK_SPEED:.6f}px/s.')
@@ -422,7 +449,8 @@ def main():
             p.renderer = p.SDL_CreateRenderer(p.window, -1, p.SDL_RENDERER_SOFTWARE)
         assert p.renderer, p.SDL_GetError()
         p.print_fps = lambda: None
-        title = b'Explorer D Omni Idle + Walk - Flat Ground Review' if FIELD_NE else (
+        title = b'Explorer A Omni Idle + Walk - Flat Ground Review' if FIELD_SW else (
+            b'Explorer D Omni Idle + Walk - Flat Ground Review' if FIELD_NE else
             b'Explorer S v4 Idle + Walk - Flat Ground Review' if FIELD_SE else
             b'Explorer W v2 Idle + Walk - Flat Ground Review' if FIELD_NW else
             b'W NW Idle + Walk - Flat Ground Review' if VIDEO_NW else TITLE
@@ -436,7 +464,8 @@ def main():
         if checking:
             check(mode)
         else:
-            label = {'field-ne': 'Explorer D Omni Idle + Walk (16 frames)',
+            label = {'field-sw': 'Explorer A Omni Idle + Walk (16 frames)',
+                     'field-ne': 'Explorer D Omni Idle + Walk (16 frames)',
                      'field-se': 'Explorer S v4 Idle + Walk (16 frames)',
                      'field': 'Explorer W Idle + Walk (16 frames)',
                      'video': 'W NW video Idle + Walk (16 frames)',
