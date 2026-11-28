@@ -1,0 +1,357 @@
+{
+  "schema": "explorer.walk.pico2d.v1",
+  "frame_size": [
+    64,
+    64
+  ],
+  "pivot": [
+    32,
+    54
+  ],
+  "sampling": "nearest",
+  "image": "walk.png",
+  "sheet_size": [
+    256,
+    256
+  ],
+  "source": {
+    "approved_walk_nw": "../player_explorer_field_nw_v2/walk.png",
+    "comparison_walk_se": "../player_explorer_field_se_v2/walk.png",
+    "base_motion_se": "../player_explorer_walk_tuscan_v1/walk.png",
+    "new_idle_reference": "idle-se-source.png",
+    "art": "One new whole-figure ImageGen atlas; no cells or figure parts from earlier S atlases.",
+    "packing": {
+      "common_scale": 0.1541095890410959,
+      "common_offset_px": [
+        9.82128982769768,
+        7.150684931506845
+      ]
+    },
+    "imagegen_prompt": "One 4x4 sheet of SIXTEEN full-body frames of a southeast explorer walk loop, real alpha. INPUT 1 = exact character and exact 2:1 quarter-front camera, lighting, proportions, clothing, gear. INPUT 2 = exact opposite (NW) 16-pose game production walk of the SAME person; use its ordinary relaxed alternating arm swing, low bent elbows and physical proportions as reference. INPUT 3 = the precise registration for each of the 16 NEW south-east poses. It has lower-leg examples, green dots for head crown and pelvis alignment, and two BLUE dots showing the shoulder and the PALM of the foreground arm on screen left. IN EACH OF THE 16 CELLS DRAW THAT VISIBLE BARE PALM AT THE LOWER BLUE DOT, and connect it to the upper blue dot on the same shoulder with a natural relaxed elbow. This visible shift is the primary objective: the foreground hand at 00 is BACK beside the pocket with its upper arm lightly tilted back. 04 palm is down at the side. The hand at 08 is a little FORWARD toward screen-right with its forearm and elbow drawn consistently connected, not crossing the center of the body, under the shoulder line and alongside the front thigh. At 12 hand is back at the side. This movement happens smoothly frame-to-frame like a relaxed pendulum as in input 2. DO NOT draw the same hanging arm above the boots in all frames. The far hand on screen-right gently counter-swings and is partially concealed only where it goes behind the far thigh. Near arm unobstructed and supple, same normal fingers, wrist, elbow, length, width and shoulder attachment throughout. Exactly the same modern hand-painted character in one take, a slim fit young labyrinth explorer with lush chestnut hair, light linen sleeves, a short soft muted teal cloak, worn brown pants/boots, modest leather shoulder satchel and rope. No weapon. Draw the entire figure for every frame; no repeated or mirrored drawings. Follow reference 3 for each connected leg and boot position. Draw first contact at cell 0 with near leg forward/down-right, then far foot folds and travels past it low, far boot extends in 05-07 (06 already partly extended, 07 nearly set), far boot contacts at 08 forward/downright while camera-near boot trails back/upright, then near boot swings forward as 11-15, near boot at 15 already close to its cell-00 foot placement. At 00 and 08 the forward sole is visibly lower in the frame (+Y and +X) than the rear one: keep their projection down-right, never horizontal side view. Equal limb size, same translucent shading/material consistency, each ankle follows its own knee direction. Locked overhead orthographic 2:1 front-quarter camera as in 1, see top of head plus portion of chest and front-side face. Same camera, fixed size, shoes on the same projected floor and tiny hip elevation change. Allow generous cell margins. Exactly 16 full figures, 4 equal rows and columns, reading order. Do not render guides, green or blue marks, gray board, numbers, lines, shadows, VFX, text, ground or background. Genuine transparent isolation of every cel.",
+    "limb_coordinates": "screen-space",
+    "active_limb": "screen-left near arm, on the same shoulder throughout",
+    "anchor_limb": "screen-right far arm",
+    "review": {
+      "sole_sample_method": "Near-ground opaque contour sampled within selected boot windows. Drift is a sample, not a persistent heel track.",
+      "sampled_contacts": [
+        {
+          "frames": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "base": {
+            "sole_contour_px": [
+              [
+                38.42,
+                55.5
+              ],
+              [
+                36.0,
+                54.5
+              ],
+              [
+                35.0,
+                54.5
+              ],
+              [
+                33.23,
+                54.5
+              ]
+            ],
+            "max_error_relative_to_base_px": 0.0,
+            "max_world_drift_from_first_sample_px": 8.44
+          },
+          "previous": {
+            "sole_contour_px": [
+              [
+                37.5,
+                53.5
+              ],
+              [
+                35.0,
+                53.5
+              ],
+              [
+                33.92,
+                53.5
+              ],
+              [
+                32.92,
+                53.5
+              ]
+            ],
+            "max_error_relative_to_base_px": 1.17,
+            "max_world_drift_from_first_sample_px": 9.54
+          },
+          "redraw": {
+            "sole_contour_px": [
+              [
+                38.5,
+                54.5
+              ],
+              [
+                36.5,
+                53.5
+              ],
+              [
+                34.88,
+                53.5
+              ],
+              [
+                33.64,
+                53.5
+              ]
+            ],
+            "max_error_relative_to_base_px": 0.42,
+            "max_world_drift_from_first_sample_px": 8.72
+          }
+        },
+        {
+          "frames": [
+            9,
+            10,
+            11,
+            12
+          ],
+          "base": {
+            "sole_contour_px": [
+              [
+                41.74,
+                55.5
+              ],
+              [
+                37.74,
+                54.5
+              ],
+              [
+                35.74,
+                53.5
+              ],
+              [
+                34.74,
+                53.5
+              ]
+            ],
+            "max_error_relative_to_base_px": 0.0,
+            "max_world_drift_from_first_sample_px": 6.4
+          },
+          "previous": {
+            "sole_contour_px": [
+              [
+                42.23,
+                54.5
+              ],
+              [
+                37.33,
+                53.5
+              ],
+              [
+                36.19,
+                53.5
+              ],
+              [
+                35.19,
+                53.5
+              ]
+            ],
+            "max_error_relative_to_base_px": 1.0,
+            "max_world_drift_from_first_sample_px": 7.04
+          },
+          "redraw": {
+            "sole_contour_px": [
+              [
+                39.92,
+                53.5
+              ],
+              [
+                38.05,
+                53.5
+              ],
+              [
+                36.4,
+                53.5
+              ],
+              [
+                33.9,
+                53.5
+              ]
+            ],
+            "max_error_relative_to_base_px": 3.19,
+            "max_world_drift_from_first_sample_px": 8.47
+          }
+        }
+      ],
+      "flat_review_duration_ms": 800,
+      "comparison_reference_w_time": "phase-aligned to S, not W runtime cadence"
+    }
+  },
+  "clips": {
+    "walk-se": {
+      "direction": "se",
+      "frames": [
+        {
+          "rect": [
+            0,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            0,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            0,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            0,
+            192,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            192,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            192,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            192,
+            64,
+            64
+          ]
+        }
+      ],
+      "durations_ms": [
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50
+      ],
+      "loop": true,
+      "phase_offset_frames": 0,
+      "start_contact": "anatomical right foot",
+      "cycle_distance_px": 35.77708763999664,
+      "step_events": [
+        {
+          "frame": 0,
+          "event": "step_contact_1"
+        },
+        {
+          "frame": 8,
+          "event": "step_contact_2"
+        }
+      ]
+    }
+  }
+}

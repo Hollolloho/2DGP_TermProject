@@ -1,0 +1,49 @@
+{
+  "schema": "explorer.walk.pico2d.v1",
+  "frame_size": [
+    64,
+    64
+  ],
+  "pivot": [
+    32,
+    54
+  ],
+  "sampling": "nearest",
+  "image": "idle.png",
+  "sheet_size": [
+    64,
+    64
+  ],
+  "source": {
+    "image": "idle-se-source.png",
+    "appearance": "New whole-figure ImageGen Idle based on approved W art.",
+    "packing": {
+      "scale": 0.03781882145998241,
+      "offset_px": [
+        10.312442311968546,
+        8.146877748460867
+      ]
+    },
+    "imagegen_prompt": "Create a NEW full-length transparent SE standing Idle reference of this exact labyrinth explorer. Input 1 is the approved NW reference: treat it as the actual same human, face age, head/body ratio, slender limb proportions, soft painterly color/materials and outfit, not a style suggestion. Turn that character about 180 degrees to face southeast so the orthographic 2-to-1 quarter game camera sees his chest and the side on the left of the image; his toes and torso face down-right. Match exactly the camera elevation and apparent body scale of Image 1: no wider shoulders, bulkier sleeves, enlarged wrists or hands, shorter forearm or leg. Input 2 is the canonical facial detail only for that same young adult brown-haired explorer. Same worn short muted teal hooded shoulder mantle, rolled flax shirt, dark brown trousers, thin wrapped leather bracers, one small belt satchel and one rope loop at their same anatomical sides, worn laced brown boots. Forearms both relaxed and straight-ish under their own shoulders, hands pleasantly small, no splayed fingers or wrists rotated backwards, elbows low and proportionate. Natural neutral standing stance with two boots clear, flat on the ground at their correct stagger from the down-right camera, anatomical equal knee/thigh/ankle sizes and consistent shape. Maintain chest-height waist and natural pelvis with a lean practical silhouette. Face and core identity must read at 64px, painterly with simple broad cloth highlights, neutral consistent light. One complete body centered on square transparent RGBA, head through soles with margins, no floor, halo, shadow, text, weapon, effects or guide marks. The result must clearly look like the exact W character rotated towards the camera."
+  },
+  "clips": {
+    "idle-se": {
+      "direction": "se",
+      "frames": [
+        {
+          "rect": [
+            0,
+            0,
+            64,
+            64
+          ]
+        }
+      ],
+      "durations_ms": [
+        1000
+      ],
+      "loop": true,
+      "still_frame": 0
+    }
+  }
+}

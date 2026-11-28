@@ -1,0 +1,41 @@
+{
+  "schema": "explorer.walk.pico2d.v1",
+  "frame_size": [
+    64,
+    64
+  ],
+  "pivot": [
+    32,
+    54
+  ],
+  "sampling": "nearest",
+  "image": "idle.png",
+  "sheet_size": [
+    64,
+    64
+  ],
+  "source": {
+    "image": "../player_explorer_field_se_v3/idle.png",
+    "idle_srgb_gain": 0.89
+  },
+  "clips": {
+    "idle-se": {
+      "direction": "se",
+      "frames": [
+        {
+          "rect": [
+            0,
+            0,
+            64,
+            64
+          ]
+        }
+      ],
+      "durations_ms": [
+        1000
+      ],
+      "loop": true,
+      "still_frame": 0
+    }
+  }
+}

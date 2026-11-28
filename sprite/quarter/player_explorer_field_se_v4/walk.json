@@ -1,0 +1,207 @@
+{
+  "schema": "explorer.walk.pico2d.v1",
+  "frame_size": [
+    64,
+    64
+  ],
+  "pivot": [
+    32,
+    54
+  ],
+  "sampling": "nearest",
+  "image": "walk.png",
+  "sheet_size": [
+    256,
+    256
+  ],
+  "source": {
+    "previous_walk": "../player_explorer_field_se_v3/walk.png",
+    "timing_reference": "../player_explorer_field_nw_v2/walk.json",
+    "description": "Full ImageGen redraw of poses 14 and 15 between locked poses 13 and 00. One shared scale and vertical origin, with x registration per atlas column from the anchor poses. Uniform export color gain, alpha retained.",
+    "redrawn_frames": [
+      14,
+      15
+    ],
+    "walk_srgb_gain": 0.79,
+    "shared_scale": 0.1016949152542373,
+    "registered_column_offsets_px": [
+      [
+        0.31365368521585424,
+        -0.10834282721278754
+      ],
+      [
+        2.9377326327827475,
+        -0.10834282721278754
+      ]
+    ],
+    "imagegen_prompt": "Edit this exact existing game sprite in four grid cells, retain its lean, dark small brown-haired adult explorer with short deep muted green-blue shoulder scarf, simple beige linen, wrist wraps, leather trousers and worn boots. Input 1 is the final high-resolution game painting source for the SAME man, the exact style, camera and scale. Input 2 is a POSITION MATCH underlay, one square panel per pose, in 2 columns, 2 rows. Draw exactly those four full-body figures on transparent alpha, same quarter view southeast down-right about 27 degrees. First pose and last pose are alignment anchors; keep the motion of those poses exactly and their head and hip aligned to the turquoise circles. All four heads should be placed exactly the same within their own cell, hair and own face shape identical from sprite to sprite, chest and waist dark and quiet, arms relaxed and close to the body's ends, natural wrists. Both center poses, 14 and 15, are the only pose corrections, and are consecutive frames of the leg moving forward over floor: draw the entire SAME character in each, preserving the geometry of head, torso, opposite swinging hands, belt and size from their game ref. Move the tip of the forward boot in each cell to its amber ring. At 14 the movement is around 60% of extension, and the boot is VISIBLY suspended about 4 sprite pixels up and 4 left of the S00 contact, its knee mildly bent and rear FOOT still at floor. At 15 the SAME front leg is closer to fully extended, the tip of its boot is two pixels UP and two LEFT of the final S00 toe; its knee gently straightens as foot begins to turn toe up. This forward foot is in the air with a short visible gap so it does not look stuck before the first-frame heel contact. The rear foot continues toward screen left with a small increasing heel lift. At 00 the forward leg extends into a touchdown and the other leg moves left/back. No two identical poses, do not swap the shoes. Counter-swing the far relaxed hand only slightly forward from 14 through 15 to 00 so it does not snap at 00. Keep the hand and shoulder proportions, dark clothing and all fixed animation scale. Locked head and hips position in every cell with no leaning or translation, both boots complete. One 2x2 equal-cell square atlas with wide gutters, no marks, circles, lines, numbers, border, floor, gray, shadow, text, effects or other figures. Preserve original art style and palette.\n"
+  },
+  "clips": {
+    "walk-se": {
+      "direction": "se",
+      "frames": [
+        {
+          "rect": [
+            0,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            0,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            0,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            64,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            0,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            128,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            0,
+            192,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            64,
+            192,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            128,
+            192,
+            64,
+            64
+          ]
+        },
+        {
+          "rect": [
+            192,
+            192,
+            64,
+            64
+          ]
+        }
+      ],
+      "durations_ms": [
+        20,
+        20,
+        20,
+        20,
+        20,
+        21,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20
+      ],
+      "loop": true,
+      "phase_offset_frames": 0,
+      "start_contact": "anatomical right foot",
+      "cycle_distance_px": 28.754794,
+      "step_events": [
+        {
+          "frame": 0,
+          "event": "step_contact_1"
+        },
+        {
+          "frame": 8,
+          "event": "step_contact_2"
+        }
+      ],
+      "total_duration_ms": 321
+    }
+  }
+}

@@ -24,9 +24,15 @@ PACK = Path('sprite/quarter/player_explorer_walk_tuscan_v1')
 VIDEO_PACK = Path('sprite/quarter/player_explorer_video_nw_review_v1')
 FIELD_PACK = Path('sprite/quarter/player_explorer_field_nw_v2')
 FIELD_IDLE_PACK = Path('sprite/quarter/player_explorer_field_draft_v1')
-FIELD_NW = '--field-nw' in sys.argv
+SE_PACK = Path('sprite/quarter/player_explorer_field_se_v4')
+SE_PREVIOUS_PACK = Path('sprite/quarter/player_explorer_field_se_v3')
+FIELD_SE = '--field-se' in sys.argv
+FIELD_NW = FIELD_SE or '--field-nw' in sys.argv
 VIDEO_NW = FIELD_NW or '--video-nw' in sys.argv
-DEFAULT_VARIANT = 'field' if FIELD_NW else 'video' if VIDEO_NW else 'after'
+DEFAULT_VARIANT = 'field-se' if FIELD_SE else 'field' if FIELD_NW else 'video' if VIDEO_NW else 'after'
+COMPARISON_VARIANT = (
+    'field-se-previous' if FIELD_SE else 'video' if FIELD_NW else 'after' if VIDEO_NW else 'before'
+)
 KEYS = {p.SDLK_w: (-1, 0), p.SDLK_a: (0, 1),
         p.SDLK_s: (1, 0), p.SDLK_d: (0, -1)}
 FACES = {p.SDLK_w: 'nw', p.SDLK_a: 'sw', p.SDLK_s: 'se', p.SDLK_d: 'ne'}
@@ -73,6 +79,23 @@ class ReviewView(View):
             texture = f'review-{name}-idle'
             self.images[texture] = self.load(idle_pack/video_idle['image'], pixel=True)
             self.nw_idles[name] = {**video_idle['clips']['idle-nw'], 'review_texture': texture}
+        if FIELD_SE:
+            self.se_idles = {}
+            for variant, pack in (('field-se-previous', SE_PREVIOUS_PACK), ('field-se', SE_PACK)):
+                se_idle = json.loads((ROOT/pack/'idle.json').read_text(encoding='utf-8'))
+                assert se_idle['pivot'] == idle['pivot'] and se_idle['frame_size'] == idle['frame_size']
+                idle_texture = f'review-{variant}-idle'
+                self.images[idle_texture] = self.load(pack/se_idle['image'], pixel=True)
+                self.se_idles[variant] = {**se_idle['clips']['idle-se'], 'review_texture': idle_texture}
+                data = json.loads((ROOT/pack/'walk.json').read_text(encoding='utf-8'))
+                assert data['pivot'] == idle['pivot'] and data['frame_size'] == idle['frame_size']
+                texture = f'review-{variant}'
+                self.images[texture] = self.load(pack/data['image'], pixel=True)
+                self.variants[variant] = {
+                    **self.variants['field'],
+                    'walk-se': {**data['clips']['walk-se'], 'review_texture': texture},
+                }
+                self.nw_idles[variant] = self.nw_idles['field']
         self.variant = 'after'
         self.authored_pace = True
         self.playback_rate = 1.
@@ -85,6 +108,8 @@ class ReviewView(View):
         self.player_catalog['clips'].update(self.variants[name])
         if VIDEO_NW:
             self.player_catalog['clips']['idle-nw'] = self.nw_idles[name]
+        if FIELD_SE:
+            self.player_catalog['clips']['idle-se'] = self.se_idles[name]
 
     def set_pace(self, authored):
         self.authored_pace = authored
@@ -96,6 +121,10 @@ class ReviewView(View):
             self.variants[name]['walk-nw']['cycle_distance_px'] = (
                 source_distance if authored else contact_distance
             )
+        if FIELD_SE:
+            distance = self.variants['field']['walk-nw']['cycle_distance_px']
+            for name in (DEFAULT_VARIANT, COMPARISON_VARIANT):
+                self.variants[name]['walk-se']['cycle_distance_px'] = distance
 
     def walk_period(self, facing):
         return self.player_catalog['clips']['walk-'+facing]['cycle_distance_px']/WALK_SPEED
@@ -117,7 +146,10 @@ class ReviewView(View):
         clip, index = self.player_pose(game)
         face = game.locomotion_clip_name('walk')[5:].upper()
         state = 'Walk' if game.player.state == 'walk' else 'Idle'
-        if VIDEO_NW:
+        if FIELD_SE:
+            label = {'SE': '탐험가 S v4' if self.variant == 'field-se' else '탐험가 S v3',
+                     'NW': '탐험가 W v2'}.get(face, '기존')
+        elif VIDEO_NW:
             label = {'field': '탐험가 W v2', 'video': '영상 W', 'after': '기존 W'}[self.variant]
         else:
             label = '수정 후' if self.variant == 'after' else '수정 전'
@@ -127,8 +159,10 @@ class ReviewView(View):
                   f' · {self.walk_period(face.lower()):.3f}초', 24, 21, tone, size='hud_font')
         self.text(f'게임 {WALK_SPEED:.1f}px/s · 재생 {self.playback_rate:g}배'
                   f' · 표시 {self.actual_fps:.0f}FPS', 24, 44, tone)
-        self.text('W 북서  A 남서  S 남동  D 북동  |  Tab 전후 비교', 24, 65, tone)
-        pace_keys = '1 영상 주기  2 접지 기준' if VIDEO_NW else '1 0.8초  2 0.4초'
+        comparison_key = 'Tab S 전후 비교' if FIELD_SE else 'Tab 전후 비교'
+        self.text('W 북서  A 남서  S 남동  D 북동  |  '+comparison_key, 24, 65, tone)
+        pace_keys = ('1 영상 동기 / 2 접지 동기' if FIELD_SE
+                     else '1 영상 주기  2 접지 기준' if VIDEO_NW else '1 0.8초  2 0.4초')
         self.text(pace_keys+'  F3 느리게  Space 정지  [ ] 한 장  R 중앙', 24, 86, tone)
         self.rectangle(466, 12, 158, 157, (31, 31, 34, 245))
         self.text('확대', 477, 20, tone)
@@ -159,8 +193,8 @@ class FlatReview:
         self.held.clear()
         player = self.game.player
         player.x, player.y = COLS/2, ROWS/2
-        player.direction = 1 if VIDEO_NW else 3
-        player.screen_facing = 'nw' if VIDEO_NW else 'ne'
+        player.direction = 2 if FIELD_SE else 1 if VIDEO_NW else 3
+        player.screen_facing = 'se' if FIELD_SE else 'nw' if VIDEO_NW else 'ne'
         player.gait_phase = 0.
         player.rest()
         self.view.camera_game = None
@@ -202,9 +236,8 @@ class FlatReview:
                 elif key in (p.SDLK_1, p.SDLK_2):
                     self.view.set_pace(key == p.SDLK_1)
                 elif key == p.SDLK_TAB:
-                    comparison = 'video' if FIELD_NW else 'after' if VIDEO_NW else 'before'
                     self.view.set_variant(
-                        comparison if self.view.variant == DEFAULT_VARIANT else DEFAULT_VARIANT
+                        COMPARISON_VARIANT if self.view.variant == DEFAULT_VARIANT else DEFAULT_VARIANT
                     )
                 elif key == p.SDLK_F3:
                     self.view.playback_rate = .25 if self.view.playback_rate == 1. else 1.
@@ -235,11 +268,22 @@ class FlatReview:
 
 def check(mode):
     turns = restarts = cadence = 0
-    comparison = 'video' if FIELD_NW else 'after' if VIDEO_NW else 'before'
-    for variant in (comparison, DEFAULT_VARIANT):
+    for variant in (COMPARISON_VARIANT, DEFAULT_VARIANT):
         mode.view.set_variant(variant)
         for authored in (True, False):
             mode.view.set_pace(authored)
+            if FIELD_SE:
+                assert mode.view.walk_period('se') == mode.view.walk_period('nw')
+                period = mode.view.walk_period('nw')
+                for key in (p.SDLK_w, p.SDLK_s):
+                    mode.reset()
+                    mode.held = [key]
+                    for frame in range(1, 49):
+                        # Both half-frame ticks fit within the game's 50 ms update cap.
+                        mode.update(period/32)
+                        mode.update(period/32)
+                        _, index = mode.view.player_pose(mode.game)
+                        assert index == frame % 16
             for key, face in FACES.items():
                 period = mode.view.walk_period(face)
                 expected_clip = mode.view.variants[variant]['walk-'+face]
@@ -267,10 +311,12 @@ def check(mode):
                     saved = player.gait_phase
                     clip, index = mode.view.player_pose(mode.game)
                     assert player.state == 'idle' and clip['direction'] == face
-                    expected_idle = (
-                        f'review-{variant}-idle' if variant in mode.view.video_paces and face == 'nw'
-                        else 'review-idle'
-                    )
+                    idle_variant = 'field' if FIELD_SE else variant
+                    expected_idle = 'review-idle'
+                    if face == 'nw' and idle_variant in mode.view.video_paces:
+                        expected_idle = f'review-{idle_variant}-idle'
+                    elif face == 'se' and FIELD_SE:
+                        expected_idle = f'review-{variant}-idle'
                     assert clip['review_texture'] == expected_idle
                     mode.held = [key]
                     mode.update(.001)
@@ -301,19 +347,28 @@ def check(mode):
         assert mode.view.video_paces['field'] == mode.view.video_paces['video']
         versions = [mode.view.variants[name]['walk-nw'] for name in ('field', 'video')]
         assert versions[0]['durations_ms'] == versions[1]['durations_ms']
+    if FIELD_SE:
+        a, b = (mode.view.variants[name] for name in (COMPARISON_VARIANT, DEFAULT_VARIANT))
+        assert all(a[name] is b[name] for name in a if name != 'walk-se')
+        assert b['walk-se']['review_texture'] == 'review-field-se'
+        assert len(b['walk-se']['frames']) == 16
+        for key in ('cycle_distance_px', 'step_events', 'phase_offset_frames'):
+            assert a['walk-se'][key] == b['walk-se'][key]
+        assert b['walk-se']['cycle_distance_px'] == b['walk-nw']['cycle_distance_px']
+        print('PASS: W/S select the same frame at equal travel for 3 loops in both pace modes.')
     mode.view.set_variant(DEFAULT_VARIANT)
     mode.reset()
     mode.view.draw(mode.game)
     mode.game.ui_time += 1.
     mode.view.draw(mode.game)
     if VIDEO_NW:
-        mode.held = [p.SDLK_w]
+        mode.held = [p.SDLK_s if FIELD_SE else p.SDLK_w]
         mode.update(.001)
         mode.view.draw(mode.game)
         mode.held.clear()
         mode.update(.001)
         mode.view.draw(mode.game)
-        print('PASS: W-only video Idle and Walk render, including stop and restart.')
+        print(f'PASS: {"S" if FIELD_SE else "W"} Idle and Walk render, including stop and restart.')
     print(f'PASS: {cadence} cadence cases x3 loops, {restarts} restarts, '
           f'{turns} turns; matching Idle4, current Walk16x4; speed {WALK_SPEED:.6f}px/s.')
 
@@ -328,7 +383,8 @@ def main():
             p.renderer = p.SDL_CreateRenderer(p.window, -1, p.SDL_RENDERER_SOFTWARE)
         assert p.renderer, p.SDL_GetError()
         p.print_fps = lambda: None
-        title = b'Explorer W v2 Idle + Walk - Flat Ground Review' if FIELD_NW else (
+        title = b'Explorer S v4 Idle + Walk - Flat Ground Review' if FIELD_SE else (
+            b'Explorer W v2 Idle + Walk - Flat Ground Review' if FIELD_NW else
             b'W NW Idle + Walk - Flat Ground Review' if VIDEO_NW else TITLE
         )
         p.SDL_SetWindowTitle(p.window, title)
@@ -340,7 +396,8 @@ def main():
         if checking:
             check(mode)
         else:
-            label = {'field': 'Explorer W Idle + Walk (16 frames)',
+            label = {'field-se': 'Explorer S v4 Idle + Walk (16 frames)',
+                     'field': 'Explorer W Idle + Walk (16 frames)',
                      'video': 'W NW video Idle + Walk (16 frames)',
                      'after': 'Walk MVP NW/NE16'}[DEFAULT_VARIANT]
             print(f'{label} ready. WASD/Tab/F3/Space/[ ].', flush=True)
